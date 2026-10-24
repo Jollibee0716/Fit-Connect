@@ -1,0 +1,103 @@
+<?php
+
+namespace App\Http\Controllers\Owner;
+
+use App\Http\Controllers\Controller;
+use App\Models\Gym;
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
+
+class ProfileController extends Controller
+{
+    public function show(Request $request): JsonResponse
+    {
+        return response()->json([
+            'owner' => $this->ownerPayload($request->user()),
+            'gym'   => $this->gymPayload($this->gym($request)),
+        ]);
+    }
+
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'name'     => ['required', 'string', 'max:100'],
+            'email'    => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'phone'    => ['nullable', 'string', 'max:30'],
+            'location' => ['nullable', 'string', 'max:100'],
+            'bio'      => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $user->update($data);
+
+        return response()->json(['owner' => $this->ownerPayload($user->fresh())]);
+    }
+
+    public function updateGym(Request $request): JsonResponse
+    {
+        $gym = $this->gym($request);
+
+        $data = $request->validate([
+            'gym_name' => ['required', 'string', 'max:150'],
+            'address'  => ['required', 'string', 'max:255'],
+            'phone'    => ['nullable', 'string', 'max:30'],
+            'hours'    => ['nullable', 'string', 'max:120'],
+            'about'    => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $gym->update($data);
+
+        return response()->json(['gym' => $this->gymPayload($gym->fresh())]);
+    }
+
+    public function updatePassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'current_password' => ['required', 'current_password'],
+            'password'         => ['required', 'confirmed', Password::min(8)],
+        ], [
+            'current_password.current_password' => 'Your current password is incorrect.',
+            'password.confirmed'                => 'New password and confirmation do not match.',
+        ]);
+
+        $request->user()->forceFill(['password' => Hash::make($request->password)])->save();
+
+        return response()->json(['ok' => true]);
+    }
+
+    private function gym(Request $request): Gym
+    {
+        return Gym::where('owner_id', $request->user()->id)->firstOrFail();
+    }
+
+    private function ownerPayload(User $u): array
+    {
+        return [
+            'name'       => $u->name,
+            'email'      => $u->email,
+            'phone'      => $u->phone,
+            'location'   => $u->location,
+            'bio'        => $u->bio,
+            'since'      => optional($u->created_at)->toDateString(),
+            'last_login' => optional($u->last_login_at)->toIso8601String(),
+        ];
+    }
+
+    private function gymPayload(Gym $g): array
+    {
+        return [
+            'id'       => $g->id,
+            'gym_name' => $g->gym_name,
+            'status'   => $g->status,
+            'address'  => $g->address,
+            'phone'    => $g->phone,
+            'hours'    => $g->hours,
+            'about'    => $g->about,
+        ];
+    }
+}

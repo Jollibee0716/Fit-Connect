@@ -1,0 +1,125 @@
+
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\AuditController;
+use App\Http\Controllers\AdminPeopleController;
+use App\Http\Controllers\AdminDetailController;
+use App\Http\Controllers\AdminStatusController;
+use App\Http\Controllers\TwoFactorController;
+use App\Http\Middleware\EnsureUserIsActive;
+use App\Http\Controllers\AdminGymController;
+use App\Http\Controllers\Owner\ProfileController as OwnerProfileController;
+
+Route::get('/', function () {
+    return view('home');
+})->name('home');
+
+Route::get('/log_in', [AuthController::class, 'showLogin'])
+    ->name('login');
+
+Route::post('/log_in', [AuthController::class, 'login'])
+    ->middleware('throttle:5,1')
+    ->name('login.submit');
+
+Route::get('/two-factor', [TwoFactorController::class, 'show'])
+    ->name('two-factor.show');
+
+Route::post('/two-factor', [TwoFactorController::class, 'verify'])
+    ->middleware('throttle:10,1')
+    ->name('two-factor.verify');
+
+Route::post('/two-factor/resend', [TwoFactorController::class, 'resend'])
+    ->middleware('throttle:3,1')
+    ->name('two-factor.resend');
+
+Route::post('/register', [AuthController::class, 'register'])
+    ->middleware('throttle:10,1')
+    ->name('register');
+
+Route::post('/logout', [AuthController::class, 'logout'])
+    ->name('logout');
+
+Route::get('/forgot-password', [AuthController::class, 'showForgotPassword'])
+    ->name('password.request');
+
+Route::post('/forgot-password', [AuthController::class, 'sendResetLink'])
+    ->middleware('throttle:5,1')
+    ->name('password.email');
+
+Route::get('/reset-password/{token}', function ($token) {
+    return view('reset-password', [
+        'token' => $token,
+        'email' => request('email'),
+    ]);
+})->name('password.reset');
+
+Route::post('/reset-password', [AuthController::class, 'resetPassword'])
+    ->middleware('throttle:5,1')
+    ->name('password.update');
+
+Route::middleware(['auth', EnsureUserIsActive::class])->group(function () {
+
+    // Dashboards
+    Route::get('/dashboard', [DashboardController::class, 'index'])
+        ->name('dashboard');
+
+    Route::get('/admin/dashboard', [DashboardController::class, 'admin'])
+        ->middleware('role:admin')
+        ->name('admin.dashboard');
+
+    Route::get('/coach/dashboard', [DashboardController::class, 'coach'])
+        ->middleware('role:gym_owner,admin')
+        ->name('coach.dashboard');
+
+    Route::get('/member/dashboard', [DashboardController::class, 'member'])
+        ->middleware('role:member')
+        ->name('member.dashboard');
+
+    // Admin profile and audit
+    Route::middleware('role:admin')->group(function () {
+
+        Route::patch('/profile', [ProfileController::class, 'update'])
+            ->name('profile.update');
+
+        Route::put('/profile/password', [ProfileController::class, 'updatePassword'])
+            ->middleware('throttle:5,1')
+            ->name('profile.password');
+
+        Route::get('/api/audit', [AuditController::class, 'index'])
+            ->name('audit.index');
+    });
+
+    // Admin management
+    Route::middleware('role:admin')->prefix('api/admin')->group(function () {
+
+        Route::get('people', [AdminPeopleController::class, 'index']);
+
+        Route::get('gyms', [AdminGymController::class, 'index']);
+
+        Route::patch('coaches/{user}/approval', [AdminPeopleController::class, 'approval']);
+
+        Route::patch('users/{user}/status', [AdminStatusController::class, 'update']);
+
+        Route::delete('users/{user}', [AdminPeopleController::class, 'destroy']);
+
+        Route::get('users/{id}/details', [AdminDetailController::class, 'show']);
+    });
+
+    // Gym owner profile
+    Route::middleware('role:gym_owner')->prefix('api/owner')->group(function () {
+
+        Route::get('profile', [OwnerProfileController::class, 'show']);
+
+        Route::put('profile', [OwnerProfileController::class, 'updateProfile']);
+
+        Route::put('gym', [OwnerProfileController::class, 'updateGym']);
+
+        Route::put('password', [OwnerProfileController::class, 'updatePassword'])
+            ->middleware('throttle:5,1');
+    });
+
+});
