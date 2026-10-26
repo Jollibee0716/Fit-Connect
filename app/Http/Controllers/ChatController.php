@@ -2,173 +2,411 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\ChatMessage;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class ChatController extends Controller
 {
-    private function role(User $user): string
+    private const TABLE = 'chat_messages';
+
+    /*
+    |--------------------------------------------------------------------------
+    | GET GYM IDS BELONGING TO A MEMBER
+    |--------------------------------------------------------------------------
+    */
+    private function memberGymIds($memberId, $includeSession = false)
     {
-        return match (strtolower(trim((string) $user->role))) {
-            'admin', 'administrator' => 'admin',
-            'owner', 'gym_owner' => 'owner',
-            'member', 'user' => 'member',
-            default => 'unknown',
-        };
+        $gymIds = [];
+
+        if ($includeSession) {
+            $selected = (int) session(
+                'fitconnect_selected_gym_id',
+                0
+            );
+
+            if ($selected > 0) {
+                $gymIds[] = $selected;
+            }
+        }
+
+        $gymIds = array_merge(
+            $gymIds,
+            DB::table('members')
+                ->where('user_id', $memberId)
+                ->whereNotNull('gym_id')
+                ->pluck('gym_id')
+                ->all()
+        );
+
+        $gymIds = array_merge(
+            $gymIds,
+            DB::table('payments')
+                ->where('user_id', $memberId)
+                ->where('type', 'membership')
+                ->whereIn('status', ['pending', 'accepted'])
+                ->pluck('gym_id')
+                ->all()
+        );
+
+        return collect($gymIds)
+            ->filter(fn ($id) => (int) $id > 0)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
-    /**
-     * IMPORTANT: This assumes gyms(id,user_id) and gym_members(gym_id,user_id).
-     * Adapt to your REAL member enrollment schema before enabling owner-member messaging.
-     * Missing tables or columns deny access rather than permitting cross-gym messages.
-     */
-    private function sharesGym(User $owner, User $member): bool
+    /*
+    |--------------------------------------------------------------------------
+    | GET GYMS OWNED BY THE LOGGED-IN OWNER
+    |--------------------------------------------------------------------------
+    */
+    private function ownerGymIds($ownerUserId)
     {
-        if (!Schema::hasTable('gyms') || !Schema::hasTable('gym_members')) {
-            return false;
-        }
-        foreach (['id', 'user_id'] as $column) {
-            if (!Schema::hasColumn('gyms', $column)) {
-                return false;
-            }
-        }
-        foreach (['gym_id', 'user_id'] as $column) {
-            if (!Schema::hasColumn('gym_members', $column)) {
-                return false;
-            }
-        }
-
         return DB::table('gyms')
-            ->join('gym_members', 'gym_members.gym_id', '=', 'gyms.id')
-            ->where('gyms.user_id', $owner->id)
-            ->where('gym_members.user_id', $member->id)
-            ->exists();
+            ->join(
+                'gym_owners',
+                'gyms.gym_owner_id',
+                '=',
+                'gym_owners.id'
+            )
+            ->where('gym_owners.user_id', $ownerUserId)
+            ->pluck('gyms.id')
+            ->all();
     }
 
-    private function allowed(User $me, User $other): bool
+    /*
+    |--------------------------------------------------------------------------
+    | GET AUTHORIZED CHAT CONTACTS
+    |--------------------------------------------------------------------------
+    */
+    private function allowedContacts($me)
     {
-        if ($me->id === $other->id) {
-            return false;
+        $ids = [];
+
+        if ($me->role === 'member') {
+            $gymIds = $this->memberGymIds(
+                $me->id,
+                true
+            );
+
+            if (!empty($gymIds)) {
+                $ids = DB::table('gyms')
+                    ->join(
+                        'gym_owners',
+                        'gyms.gym_owner_id',
+                        '=',
+                        'gym_owners.id'
+                    )
+                    ->join(
+                        'users',
+                        'gym_owners.user_id',
+                        '=',
+                        'users.id'
+                    )
+                    ->whereIn('gyms.id', $gymIds)
+                    ->where('users.role', 'gym_owner')
+                    ->pluck('users.id')
+                    ->all();
+            }
         }
 
-        $mine = $this->role($me);
-        $theirs = $this->role($other);
+        elseif ($me->role === 'gym_owner') {
+            $gymIds = $this->ownerGymIds($me->id);
 
-        // Only Admin <-> Gym Owner (not Admin <-> Member).
-        if (($mine === 'admin' && $theirs === 'owner') ||
-            ($mine === 'owner' && $theirs === 'admin')) {
-            return true;
+            if (!empty($gymIds)) {
+                // Existing members
+                $ids = array_merge(
+                    $ids,
+                    DB::table('members')
+                        ->whereIn('gym_id', $gymIds)
+                        ->pluck('user_id')
+                        ->all()
+                );
+
+                // Members with membership requests
+                $ids = array_merge(
+                    $ids,
+                    DB::table('payments')
+                        ->whereIn('gym_id', $gymIds)
+                        ->where('type', 'membership')
+                        ->whereIn(
+                            'status',
+                            ['pending', 'accepted']
+                        )
+                        ->pluck('user_id')
+                        ->all()
+                );
+
+                // Members who previously messaged this owner.
+                // Allows replies even if the member has
+                // not yet paid for membership.
+                $previousSenders = DB::table(self::TABLE)
+                    ->where('receiver_id', $me->id)
+                    ->pluck('sender_id')
+                    ->all();
+
+                $ids = array_merge(
+                    $ids,
+                    $previousSenders
+                );
+            }
         }
 
-        // Only Gym Owner <-> registered member of that owner's gym.
-        if ($mine === 'owner' && $theirs === 'member') {
-            return $this->sharesGym($me, $other);
-        }
-        if ($mine === 'member' && $theirs === 'owner') {
-            return $this->sharesGym($other, $me);
+        // Admins can message gym owners. Gym owners can message admins.
+        if ($me->role === 'admin') {
+            $ids = DB::table('users')
+                ->where('role', 'gym_owner')
+                ->pluck('id')
+                ->all();
+        } elseif ($me->role === 'gym_owner') {
+            $ids = array_merge(
+                $ids,
+                DB::table('users')
+                    ->where('role', 'admin')
+                    ->pluck('id')
+                    ->all()
+            );
         }
 
-        // Explicitly deny all other combinations.
-        return false;
+        $ids = collect($ids)
+            ->filter(
+                fn ($id) => (int) $id > 0 &&
+                (int) $id !== (int) $me->id
+            )
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($ids)) {
+            return [];
+        }
+
+        $roles = match ($me->role) {
+            'admin' => ['gym_owner'],
+            'gym_owner' => ['admin', 'member'],
+            'member' => ['gym_owner'],
+            default => [],
+        };
+
+        return DB::table('users')
+            ->whereIn('id', $ids)
+            ->whereIn('role', $roles)
+            ->pluck('id')
+            ->all();
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | AUTHORIZE CONVERSATION
+    |--------------------------------------------------------------------------
+    */
+    private function authorizeContact($me, $contactId)
+    {
+        abort_unless(
+            in_array(
+                $me->role,
+                ['admin', 'member', 'gym_owner']
+            ),
+            403
+        );
+
+        $allowed = $this->allowedContacts($me);
+
+        abort_unless(
+            in_array(
+                (int) $contactId,
+                array_map('intval', $allowed),
+                true
+            ),
+            403,
+            'This contact is not connected to your gym.'
+        );
+
+        return DB::table('users')
+            ->where('id', $contactId)
+            ->firstOrFail();
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | LIST CHAT CONTACTS
+    |--------------------------------------------------------------------------
+    */
     public function contacts(Request $request)
     {
-        /** @var User|null $me */
         $me = $request->user();
-        abort_unless($me && $this->role($me) !== 'unknown', 403);
 
-        $users = User::query()
-            ->select('id', 'name', 'role')
-            ->where('id', '!=', $me->id)
-            ->orderBy('name')
-            ->get()
-            ->filter(fn (User $user) => $this->allowed($me, $user));
+        abort_unless(
+            in_array(
+                $me->role,
+                ['admin', 'member', 'gym_owner']
+            ),
+            403
+        );
 
-        $contacts = $users->map(function (User $user) use ($me) {
-            $pair = static function ($query) use ($me, $user) {
-                $query->where(function ($q) use ($me, $user) {
-                    $q->where('sender_id', $me->id)
-                        ->where('receiver_id', $user->id);
-                })->orWhere(function ($q) use ($me, $user) {
-                    $q->where('sender_id', $user->id)
-                        ->where('receiver_id', $me->id);
-                });
-            };
+        $ids = $this->allowedContacts($me);
 
-            $last = ChatMessage::where($pair)->latest('id')->first();
-            $unread = ChatMessage::where('sender_id', $user->id)
-                ->where('receiver_id', $me->id)
-                ->whereNull('read_at')
-                ->count();
+        if (empty($ids)) {
+            return response()->json([
+                'contacts' => []
+            ]);
+        }
 
-            return [
-                'id' => $user->id,
-                'name' => $user->name,
-                'role' => $this->role($user),
-                'last_message' => $last?->body,
-                'last_at' => $last?->created_at?->toIso8601String(),
-                'unread' => $unread,
-            ];
-        })->sortByDesc('last_at')->values();
+        $users = DB::table('users')
+            ->whereIn('id', $ids)
+            ->get(['id', 'name', 'role']);
+
+        $contacts = $users->map(
+            function ($user) use ($me) {
+                $latest = DB::table(self::TABLE)
+                    ->where(function ($query) use ($me, $user) {
+                        $query
+                            ->where('sender_id', $me->id)
+                            ->where('receiver_id', $user->id);
+                    })
+                    ->orWhere(function ($query) use ($me, $user) {
+                        $query
+                            ->where('sender_id', $user->id)
+                            ->where('receiver_id', $me->id);
+                    })
+                    ->orderByDesc('id')
+                    ->first();
+
+                $unread = DB::table(self::TABLE)
+                    ->where('sender_id', $user->id)
+                    ->where('receiver_id', $me->id)
+                    ->whereNull('read_at')
+                    ->count();
+
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'role' => match ($user->role) {
+                        'gym_owner' => 'owner',
+                        'admin' => 'admin',
+                        default => 'member',
+                    },
+                    'last_message' => $latest->body ?? '',
+                    'last_message_at' =>
+                        $latest->created_at ?? null,
+                    'unread' => $unread,
+                ];
+            }
+        );
 
         return response()->json([
-            'contacts' => $contacts,
-            'unread' => $contacts->sum('unread'),
+            'contacts' => $contacts
+                ->sortByDesc('last_message_at')
+                ->values()
+                ->all()
         ]);
     }
 
-    public function thread(Request $request, User $user)
+    /*
+    |--------------------------------------------------------------------------
+    | LOAD CHAT CONVERSATION
+    |--------------------------------------------------------------------------
+    */
+    public function thread(Request $request, $user)
     {
-        /** @var User|null $me */
         $me = $request->user();
-        abort_unless($me && $this->allowed($me, $user), 403, 'Conversation not allowed.');
 
-        ChatMessage::where('sender_id', $user->id)
+        $other = $this->authorizeContact(
+            $me,
+            $user
+        );
+
+        // Mark incoming messages as read
+        DB::table(self::TABLE)
+            ->where('sender_id', $other->id)
             ->where('receiver_id', $me->id)
             ->whereNull('read_at')
-            ->update(['read_at' => now()]);
+            ->update([
+                'read_at' => now()
+            ]);
 
-        $messages = ChatMessage::where(function ($query) use ($me, $user) {
-            $query->where(function ($q) use ($me, $user) {
-                $q->where('sender_id', $me->id)
-                    ->where('receiver_id', $user->id);
-            })->orWhere(function ($q) use ($me, $user) {
-                $q->where('sender_id', $user->id)
+        $messages = DB::table(self::TABLE)
+            ->where(function ($query) use ($me, $other) {
+                $query
+                    ->where('sender_id', $me->id)
+                    ->where('receiver_id', $other->id);
+            })
+            ->orWhere(function ($query) use ($me, $other) {
+                $query
+                    ->where('sender_id', $other->id)
                     ->where('receiver_id', $me->id);
-            });
-        })->latest('id')->limit(100)->get()->reverse()->values();
+            })
+            ->orderByDesc('id')
+            ->limit(100)
+            ->get([
+                'id',
+                'sender_id',
+                'receiver_id',
+                'body',
+                'read_at',
+                'created_at'
+            ])
+            ->reverse()
+            ->values();
 
         return response()->json([
             'my_id' => $me->id,
+            'contact' => [
+                'id' => $other->id,
+                'name' => $other->name,
+            ],
             'messages' => $messages,
         ]);
     }
 
-    public function send(Request $request, User $user)
+    /*
+    |--------------------------------------------------------------------------
+    | SEND CHAT MESSAGE
+    |--------------------------------------------------------------------------
+    */
+    public function send(Request $request, $user)
     {
-        /** @var User|null $me */
         $me = $request->user();
-        abort_unless($me && $this->allowed($me, $user), 403, 'Message not allowed.');
+
+        $other = $this->authorizeContact(
+            $me,
+            $user
+        );
 
         $validated = $request->validate([
-            'body' => ['required', 'string', 'max:2000'],
+            'body' => [
+                'required',
+                'string',
+                'max:2000'
+            ],
         ]);
+
         $body = trim($validated['body']);
+
         if ($body === '') {
-            throw ValidationException::withMessages(['body' => 'Enter a message.']);
+            throw ValidationException::withMessages([
+                'body' => 'Please enter a message.'
+            ]);
         }
 
-        $message = ChatMessage::create([
-            'sender_id' => $me->id,
-            'receiver_id' => $user->id,
-            'body' => $body,
-        ]);
+        $id = DB::table(self::TABLE)
+            ->insertGetId([
+                'sender_id' => $me->id,
+                'receiver_id' => $other->id,
+                'body' => $body,
+                'read_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
-        return response()->json(['success' => true, 'message' => $message], 201);
+        return response()->json([
+            'message' => 'Message sent successfully.',
+            'data' => DB::table(self::TABLE)
+                ->where('id', $id)
+                ->first(),
+        ], 201);
     }
 }

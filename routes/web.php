@@ -1,4 +1,3 @@
-
 <?php
 
 use Illuminate\Support\Facades\Route;
@@ -15,6 +14,7 @@ use App\Http\Controllers\TwoFactorController;
 use App\Http\Controllers\AdminGymController;
 use App\Http\Controllers\Admin\GymCatalogController;
 
+use App\Http\Controllers\Owner\ClassBookingController;
 use App\Http\Controllers\Owner\OwnerProfileController;
 use App\Http\Controllers\OwnerProductController;
 use App\Http\Controllers\OwnerOrderController;
@@ -25,6 +25,10 @@ use App\Http\Controllers\OwnerPlanController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\AvatarController;
 use App\Http\Controllers\AvatarMapController;
+
+use App\Http\Controllers\Member\PortalController;
+use App\Http\Controllers\Member\ProfileController as MemberProfileController;
+use App\Http\Controllers\Member\XenditMembershipController;
 
 use App\Http\Controllers\Owner\{
     TrainerController,
@@ -39,10 +43,6 @@ use App\Http\Middleware\EnsureUserIsActive;
 
 use App\Http\Controllers\Owner\MemberController as OwnerMemberController;
 use App\Http\Controllers\Owner\PaymentController as OwnerPaymentController;
-use App\Http\Controllers\Member\PaymentController as MemberPaymentController;
-
-// Member Portal – Explore Gyms, Memberships, Products, Orders
-use App\Http\Controllers\Member\PortalController;
 
 
 /*
@@ -109,6 +109,25 @@ Route::post('/reset-password', [
     AuthController::class,
     'resetPassword'
 ])->middleware('throttle:5,1')->name('password.update');
+
+
+/*
+|--------------------------------------------------------------------------
+| XENDIT WEBHOOK — PUBLIC ENDPOINT (TOKEN VERIFIED IN CONTROLLER)
+|--------------------------------------------------------------------------
+|
+| Xendit cannot authenticate using a member session or browser CSRF token.
+| Exclude only this URI from CSRF validation in bootstrap/app.php.
+| Never trust the request without verifying x-callback-token in the controller.
+|
+| The combined controller routes membership sessions to the membership
+| webhook and everything else to the existing product webhook.
+|
+*/
+Route::post('/webhooks/xendit', [
+    \App\Http\Controllers\XenditCombinedWebhookController::class,
+    'handle',
+])->name('xendit.webhook');
 
 
 /*
@@ -347,6 +366,17 @@ Route::middleware([
                 'destroy'
             ]);
 
+            // Class booking management (Gym Owner)
+            Route::get('classes/{class}/bookings', [
+                ClassBookingController::class,
+                'index'
+            ])->whereNumber('class');
+
+            Route::patch('class-bookings/{booking}', [
+                ClassBookingController::class,
+                'update'
+            ])->whereNumber('booking');
+
             // Trainers and Classes
             Route::get('classes/today', [
                 AttendanceCodeController::class,
@@ -405,7 +435,7 @@ Route::middleware([
 
     /*
     |--------------------------------------------------------------------------
-    | MEMBER SHOP AND ATTENDANCE
+    | MEMBER SHOP, ATTENDANCE AND PROFILE
     |--------------------------------------------------------------------------
     */
 
@@ -429,13 +459,57 @@ Route::middleware([
                 'mine'
             ]);
 
-            // Membership Payments
+            // Xendit: authenticated member creates checkout for their own order.
+            Route::post('xendit/checkout', [
+                \App\Http\Controllers\Member\XenditCheckoutController::class,
+                'store'
+            ])->middleware('throttle:10,1');
+
+            // Xendit: membership checkout and server-side verification.
+            Route::post('xendit/membership/checkout', [
+                XenditMembershipController::class,
+                'checkout'
+            ])->middleware('throttle:10,1');
+
+            Route::post('xendit/membership/verify', [
+                XenditMembershipController::class,
+                'verify'
+            ])->middleware('throttle:10,1');
+
+            // Membership Payments (now always go through Xendit checkout;
+            // the old manual MemberPaymentController@payMembership is retired).
             Route::post('membership-payments', [
-                MemberPaymentController::class,
-                'payMembership'
+                XenditMembershipController::class,
+                'checkout'
+            ])->middleware('throttle:10,1');
+
+            // Member Classes and Attendance
+            Route::get('classes', [
+                MemberAttendanceController::class,
+                'classes'
             ]);
 
-            // Member Attendance
+            // Member class reservations
+            Route::get('class-bookings', [
+                MemberAttendanceController::class,
+                'bookings'
+            ]);
+
+            Route::post('class-bookings', [
+                MemberAttendanceController::class,
+                'book'
+            ])->middleware('throttle:15,1');
+
+            Route::patch('class-bookings/{booking}/cancel', [
+                MemberAttendanceController::class,
+                'cancelBooking'
+            ])->whereNumber('booking')->middleware('throttle:15,1');
+
+            Route::get('attendance/history', [
+                MemberAttendanceController::class,
+                'history'
+            ]);
+
             Route::post('attendance/check-in', [
                 MemberAttendanceController::class,
                 'checkIn'
@@ -443,14 +517,14 @@ Route::middleware([
 
 
             /*
-            |--------------------------------------------------------------
-            | MEMBER PORTAL – EXPLORE GYMS
-            |--------------------------------------------------------------
+            |--------------------------------------------------------------------------
+            | MEMBER PORTAL
+            |--------------------------------------------------------------------------
             */
 
             Route::prefix('portal')->group(function () {
 
-                // Search and explore registered gyms
+                // Explore registered gyms
                 Route::get('gyms', [
                     PortalController::class,
                     'gyms'
@@ -462,13 +536,13 @@ Route::middleware([
                     'selectGym'
                 ]);
 
-                // Selected gym and membership status
+                // Gym and membership overview
                 Route::get('overview', [
                     PortalController::class,
                     'overview'
                 ]);
 
-                // Gym-specific membership plans and products
+                // Gym catalog
                 Route::get('catalog', [
                     PortalController::class,
                     'catalog'
@@ -485,11 +559,33 @@ Route::middleware([
                     'placeOrder'
                 ]);
 
-                // Member membership payment history
+                // Membership payment history
                 Route::get('payments', [
                     PortalController::class,
                     'payments'
                 ]);
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | MEMBER PROFILE
+                |--------------------------------------------------------------------------
+                */
+
+                Route::get('profile', [
+                    MemberProfileController::class,
+                    'show'
+                ]);
+
+                Route::put('profile', [
+                    MemberProfileController::class,
+                    'update'
+                ]);
+
+                Route::put('profile/password', [
+                    MemberProfileController::class,
+                    'updatePassword'
+                ])->middleware('throttle:5,1');
 
             });
 
@@ -505,7 +601,8 @@ Route::middleware([
     Route::post('api/profile/avatar', [
         AvatarController::class,
         'store'
-    ])->middleware('throttle:10,1')
+    ])
+        ->middleware('throttle:10,1')
         ->name('avatar.store');
 
     Route::delete('api/profile/avatar', [
@@ -522,20 +619,25 @@ Route::middleware([
 
     Route::prefix('api/chat')->group(function () {
 
+        // Available contacts
         Route::get('contacts', [
             ChatController::class,
             'contacts'
         ]);
 
+        // Conversation history
         Route::get('{user}', [
             ChatController::class,
             'thread'
         ])->whereNumber('user');
 
+        // Send message
         Route::post('{user}', [
             ChatController::class,
             'send'
-        ])->whereNumber('user');
+        ])
+            ->whereNumber('user')
+            ->middleware('throttle:30,1');
 
     });
 

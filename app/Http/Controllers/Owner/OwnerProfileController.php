@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 
@@ -15,6 +16,7 @@ class OwnerProfileController extends Controller
     {
         $user = $request->user();
         $gym  = $user->gymOwner;
+        $gymRow = $gym ? DB::table('gyms')->where('gym_owner_id', $gym->id)->first() : null;
 
         return response()->json([
             'user' => [
@@ -30,6 +32,8 @@ class OwnerProfileController extends Controller
                 'gym_name'     => $gym->gym_name ?? '',
                 'gym_address'  => $gym->gym_address ?? '',
                 'phone_number' => $gym->phone_number ?? '',
+                'about'        => $gymRow->about ?? '',
+                'hours'        => $gymRow->hours ?? '',
             ],
         ]);
     }
@@ -57,9 +61,34 @@ class OwnerProfileController extends Controller
             'gym_name'     => ['required', 'string', 'max:255'],
             'gym_address'  => ['nullable', 'string', 'max:255'],
             'phone_number' => ['nullable', 'string', 'max:30'],
+            'about'        => ['nullable', 'string', 'max:2000'],
+            'hours'        => ['nullable', 'string', 'max:120'],
         ]);
 
-        $request->user()->gymOwner()->updateOrCreate([], $data);
+        $request->user()->load('gymOwner');
+        $owner = $request->user()->gymOwner;
+        abort_unless($owner, 404, 'Gym owner profile not found.');
+
+        abort_unless(DB::table('gyms')->where('gym_owner_id', $owner->id)->exists(), 404, 'Gym record not found.');
+
+        DB::transaction(function () use ($owner, $data) {
+            // Keep the legacy owner profile fields synchronized.
+            $owner->update([
+                'gym_name' => $data['gym_name'],
+                'gym_address' => $data['gym_address'] ?? '',
+                'phone_number' => $data['phone_number'] ?? '',
+            ]);
+
+            // The gyms table is the shared source read by Admin and Members.
+            DB::table('gyms')->where('gym_owner_id', $owner->id)->update([
+                    'name' => $data['gym_name'],
+                    'address' => $data['gym_address'] ?? '',
+                    'phone' => $data['phone_number'] ?? '',
+                    'about' => $data['about'] ?? null,
+                    'hours' => $data['hours'] ?? null,
+                    'updated_at' => now(),
+                ]);
+        });
 
         return response()->json(['message' => 'Gym details saved']);
     }

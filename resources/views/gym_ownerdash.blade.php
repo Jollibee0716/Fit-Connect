@@ -298,6 +298,8 @@ textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);b
       <label class="fld">Gym name<input id="gn"></label>
       <label class="fld">Address<input id="ga"></label>
       <label class="fld">Gym phone<input id="gp" type="tel"></label>
+      <label class="fld">Gym description<textarea id="gabout" maxlength="2000" placeholder="Describe your gym, facilities, programs, and services."></textarea></label>
+      <label class="fld">Opening hours<input id="ghours" maxlength="120" placeholder="Mon–Sat: 6:00 AM–10:00 PM; Sun: 8:00 AM–6:00 PM"></label>
       <span class="ferr" id="gf-err" hidden></span>
       <button class="btn" type="submit">Save gym details</button><span class="okmsg" id="gf-ok" hidden>Gym details saved</span>
     </form>
@@ -322,6 +324,27 @@ textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);b
   <h1>Activity log</h1><p class="sub">Everything you and your gym account changed, newest first.</p>
   <input id="qa" placeholder="Search activity" aria-label="Search activity">
   <div class="box scroll"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Details</th></tr></thead><tbody id="abody"></tbody></table></div>
+</section>
+
+<section class="view" id="v-classbookings">
+  <button class="btn ghost sm" type="button" onclick="location.hash='#classes'">← Back to Classes</button>
+  <h1 id="booking-title" style="margin-top:16px">Class Bookings</h1>
+  <p class="sub">View session reservations and participants. Class slots are counted for each date.</p>
+  <div class="at-filters">
+    <label class="fld">Session date<input id="booking-date" type="date"></label>
+    <button class="btn ghost" type="button" id="booking-refresh">Refresh</button>
+  </div>
+  <div class="cards c3">
+    <div class="card"><span>Class capacity</span><strong id="booking-capacity">—</strong></div>
+    <div class="card"><span>Booked</span><strong id="booking-count">—</strong></div>
+    <div class="card"><span>Available slots</span><strong id="booking-free">—</strong></div>
+  </div>
+  <div class="box scroll">
+    <h2>Participants</h2>
+    <table><thead><tr><th>Member</th><th>Booked at</th><th>Status</th><th>Attendance</th><th>Action</th></tr></thead>
+      <tbody id="booking-rows"><tr><td colspan="5" class="empty">Choose a class to view participants.</td></tr></tbody>
+    </table>
+  </div>
 </section>
 
 <section class="view" id="v-list">
@@ -552,7 +575,8 @@ function renderPayments(){
     const s=OS[o.status]||OS.pending;let a='';
     if(o.status==='pending')a+=`<button class="btn sm" type="button" data-ord="paid" data-id="${o.id}">Mark paid</button>`;
     if(o.status==='paid' && (o.fulfillment_method||'pickup')==='pickup'){
-      if(!o.fulfillment_status || o.fulfillment_status==='awaiting_preparation')a+=`<button class="btn sm" type="button" data-pickup="ready_for_pickup" data-id="${o.id}">Ready for Pickup</button>`;
+      if(!o.fulfillment_status || o.fulfillment_status==='awaiting_preparation')a+=`<button class="btn sm" type="button" data-pickup="preparing" data-id="${o.id}">Prepare Order</button>`;
+      if(o.fulfillment_status==='preparing')a+=`<button class="btn sm" type="button" data-pickup="ready_for_pickup" data-id="${o.id}">Ready for Pickup</button>`;
       if(o.fulfillment_status==='ready_for_pickup'){
         a+=`<button class="btn sm" type="button" data-pickup="picked_up" data-id="${o.id}">Picked Up</button>`;
         a+=`<button class="btn sm ghost" type="button" data-ord="completed" data-id="${o.id}">Complete</button>`;
@@ -565,7 +589,7 @@ function renderPayments(){
       if(st==='out_for_delivery')a+=`<button class="btn sm" type="button" data-delivery="delivered" data-id="${o.id}">Delivered</button>`;
     }
     if((o.status==='pending'||o.status==='paid') && !(o.fulfillment_method==='delivery' && o.fulfillment_status==='out_for_delivery'))a+=`<button class="btn sm ghost" type="button" data-ord="cancelled" data-id="${o.id}">Cancel Order</button>`;
-    return `<tr><td class="nowrap">${esc(o.receipt)}<small>${fd(o.created_at)}</small></td><td>${who(o.name,o.user_id,esc(o.name))}</td><td>${esc(o.product)} × ${o.quantity}<small>${esc((o.fulfillment_method||'pickup')==='pickup'?'Gym pickup':'Delivery')} · ${esc(o.fulfillment_status||'Awaiting preparation')}${o.fulfillment_method==='delivery'?`<br>📍 ${esc(o.delivery_address||'Address missing')}<br>☎ ${esc(o.delivery_phone||'Phone missing')}${o.delivery_notes?`<br>Note: ${esc(o.delivery_notes)}`:''}`:''}</small></td><td class="nowrap">${money(o.total)}</td><td>${esc(o.method||'-')}<small>${esc(o.reference||'')}</small></td><td><span class="tag ${s[1]}">${s[0]}</span></td><td><div class="acts">${a}</div></td></tr>`;
+    return `<tr><td class="nowrap">${esc(o.receipt)}<small>${fd(o.created_at)}</small></td><td>${who(o.name,o.user_id,esc(o.name))}</td><td>${esc(o.product)} × ${o.quantity}<small>${esc((o.fulfillment_method||'pickup')==='pickup'?'Gym pickup':'Delivery')} · ${esc(o.fulfillment_status||'Awaiting preparation')}${o.fulfillment_method==='delivery'?`<br>📍 ${esc(o.delivery_address||'Address missing')}<br>☎ ${esc(o.delivery_phone||'Phone missing')}${o.delivery_notes?`<br>Note: ${esc(o.delivery_notes)}`:''}`:''}</small></td><td class="nowrap">${money(o.total)}</td><td>${esc(o.method||'-')}<small>${esc(o.reference||'')}</small></td><td><span class="tag ${s[1]}">${s[0]}</span><small>${esc((o.fulfillment_status||"awaiting_preparation").replace(/_/g," "))}</small></td><td><div class="acts">${a}</div></td></tr>`;
   }).join('')||`<tr><td colspan="7" class="empty">${pTab==='pending'?'No orders waiting for confirmation':'No product orders yet'}</td></tr>`;
 }
 
@@ -618,9 +642,9 @@ const API={products:'/api/owner/products',plans:'/api/owner/plans',trainers:'/ap
 const LOAD={products:()=>loadProducts(),plans:()=>loadPlans(),trainers:async()=>{await loadTrainers();await loadClasses()},classes:()=>loadClasses()};
 const CFG={
  trainers:{t:'Trainers',s:'Coaches who work at your gym.',add:'Add trainer',head:['Name','Specialty','Phone'],f:[['name','Name'],['specialty','Specialty'],['phone','Phone']],row:x=>[esc(x.name),esc(x.specialty),esc(x.phone)]},
- classes:{t:'Classes',s:'Workout classes. Attendance codes are generated from the Attendance tab.',add:'Add class',head:['Class','Coach','Schedule','Capacity'],
+ classes:{t:'Classes',s:'Manage schedules, bookings, available slots, and attendance.',add:'Add class',head:['Class','Coach','Schedule','Capacity'],
   f:[['name','Class name'],['trainer_id','Coach','select'],['days','Days','days'],['start_time','Start time','time'],['duration_min','Duration (minutes)','number'],['capacity','Capacity','number']],
-  row:x=>[esc(x.name),esc(x.trainer_name||'-'),esc(x.schedule_label),x.capacity]},
+  row:x=>[esc(x.name),esc(x.trainer_name||'-'),esc(x.schedule_label),x.capacity],extra:x=>`<button class="btn sm" type="button" data-classbookings="${Number(x.id)}">Bookings</button>`},
  plans:{t:'Membership plans',s:'The plans members choose when they pay.',add:'Add plan',head:['Plan','Price','Duration'],f:[['name','Plan name'],['price','Price (₱)','number'],['days','Duration (days)','number']],row:x=>[esc(x.name),money(x.price),x.days+' day'+(x.days==1?'':'s')]},
  products:{t:'Products',s:'Items you sell. Members see these in their shop.',add:'Add product',head:['Product','Price','In stock','Sold'],f:[['name','Product name'],['price','Price (₱)','number'],['stock','Stock','number']],
   row:x=>[esc(x.name),money(x.price),x.stock?x.stock:'<span class="tag rej">Out of stock</span>',x.sold],extra:x=>`<button class="btn sm" type="button" data-sell="${x.id}" ${x.stock?'':'disabled'}>Sell 1</button>`}
@@ -710,7 +734,7 @@ function fillProfile(){
   $('st-login').textContent=OWNER.last_login_at?new Date(OWNER.last_login_at).toLocaleString([], {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'-';
   $('st-since').textContent=OWNER.created_at?fd(OWNER.created_at):'-';
   $('on').value=OWNER.name||'';$('oe').value=OWNER.email||'';$('op').value=OWNER.phone||'';$('ol').value=OWNER.location||'';$('ob').value=OWNER.bio||'';
-  $('gn').value=GYMP.gym_name||'';$('ga').value=GYMP.gym_address||'';$('gp').value=GYMP.phone_number||'';
+  $('gn').value=GYMP.gym_name||'';$('ga').value=GYMP.gym_address||'';$('gp').value=GYMP.phone_number||'';$('gabout').value=GYMP.about||'';$('ghours').value=GYMP.hours||'';
   ['pf-err','gf-err','pw-err','pf-ok','gf-ok','pw-ok'].forEach(i=>{$(i).hidden=true});
   renderOwner();
 }
@@ -744,7 +768,7 @@ $('gf').addEventListener('submit',async e=>{e.preventDefault();
   setErr('gf-err','');
   const btn=e.submitter;if(btn)btn.disabled=true;
   try{
-    await api('/api/owner/gym','PUT',{gym_name:n,gym_address:$('ga').value.trim(),phone_number:$('gp').value.trim()});
+    await api('/api/owner/gym','PUT',{gym_name:n,gym_address:$('ga').value.trim(),phone_number:$('gp').value.trim(),about:$('gabout').value.trim(),hours:$('ghours').value.trim()});
     await loadProfile();okFlash('gf-ok');flash('Gym details saved');
   }catch(err){setErr('gf-err',err.message)}
   finally{if(btn)btn.disabled=false}
@@ -976,8 +1000,70 @@ function renderAudit(){
 }
 $('qa').oninput=e=>{qa=e.target.value;renderAudit()};
 
+/* ---- class booking management (owner) ---- */
+let currentBookingClassId=null;
+let currentBookingRows=[];
+function nextClassDate(c){
+  const d=new Date();
+  for(let i=0;i<14;i++){
+    const x=new Date(d.getFullYear(),d.getMonth(),d.getDate()+i);
+    const weekday=x.getDay()||7;
+    if((c.days||[]).map(Number).includes(weekday)){
+      return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+    }
+  }
+  return todayISO();
+}
+function openOwnerBookings(id){
+  const cls=DB.classes.find(c=>Number(c.id)===Number(id));
+  if(!cls){flash('Class not found. Refresh Classes.');return;}
+  currentBookingClassId=Number(id);
+  $('booking-date').value=nextClassDate(cls);
+  location.hash='#classbookings';
+  if(location.hash==='#classbookings')loadOwnerBookings();
+}
+async function loadOwnerBookings(){
+  if(!currentBookingClassId){$('booking-rows').innerHTML='<tr><td colspan="5">Open a class from the Classes tab.</td></tr>';return;}
+  const cls=DB.classes.find(c=>Number(c.id)===currentBookingClassId);
+  $('booking-title').textContent=(cls?.name||'Class')+' — Bookings';
+  const date=$('booking-date').value;
+  $('booking-rows').innerHTML='<tr><td colspan="5">Loading bookings...</td></tr>';
+  try{
+    const j=await api('/api/owner/classes/'+currentBookingClassId+'/bookings?date='+encodeURIComponent(date));
+    $('booking-capacity').textContent=j.capacity;
+    $('booking-count').textContent=j.booked;
+    $('booking-free').textContent=j.available;
+    currentBookingRows=j.bookings||[];
+    $('booking-rows').innerHTML=currentBookingRows.map(b=>`<tr>
+      <td>${esc(b.name)}<small>${esc(b.email||'')}</small></td>
+      <td>${esc(b.booked_at||'-')}</td>
+      <td><span class="tag ${b.status==='cancelled'?'rej':b.status==='attended'?'':'pending'}">${esc(b.status)}</span></td>
+      <td>${b.attended?'Checked in':'Not checked in'}</td>
+      <td>${b.status==='booked'?`<button class="btn sm ghost" type="button" data-owner-cancel-booking="${Number(b.id)}">Cancel</button>`:'—'}</td>
+    </tr>`).join('')||'<tr><td colspan="5" class="empty">No bookings for this session yet.</td></tr>';
+  }catch(e){$('booking-rows').innerHTML=`<tr><td colspan="5">${esc(e.message)}</td></tr>`;}
+}
+$('booking-date').addEventListener('change',loadOwnerBookings);
+$('booking-refresh').addEventListener('click',loadOwnerBookings);
+document.addEventListener('click',e=>{
+  const open=e.target.closest('[data-classbookings]');
+  if(open){openOwnerBookings(open.dataset.classbookings);return;}
+  const cancel=e.target.closest('[data-owner-cancel-booking]');
+  if(cancel){
+    const booking=currentBookingRows.find(b=>Number(b.id)===Number(cancel.dataset.ownerCancelBooking));
+    if(!booking)return;
+    askConfirm('Cancel '+booking.name+' booking?',
+      'This releases the reserved slot for this class session.', 'Cancel booking', async()=>{
+        try{
+          await api('/api/owner/class-bookings/'+booking.id,'PATCH',{status:'cancelled'});
+          flash('Booking cancelled');await loadOwnerBookings();
+        }catch(err){flash(err.message)}
+      });
+  }
+});
+
 /* ---- navigation + clicks ---- */
-const TITLES={dashboard:'Dashboard',payments:'Payments',orders:'Orders',members:'Members',messages:'Messages',profile:'My profile',activity:'Activity',attendance:'Attendance'};
+const TITLES={classbookings:'Class Bookings',dashboard:'Dashboard',payments:'Payments',orders:'Orders',members:'Members',messages:'Messages',profile:'My profile',activity:'Activity',attendance:'Attendance'};
 function clTabs(h){
   const on=h==='classes'||h==='attendance';
   document.querySelectorAll('.cltabs').forEach(el=>{
@@ -992,7 +1078,7 @@ function show(h){if(!TITLES[h]&&!CFG[h])h='dashboard';
   const v=h==='orders'?'payments':(CFG[h]?'list':h);if(CFG[h]){cur=h;renderList()}
   if(h==='orders'||h==='payments')renderPayments();
   document.querySelectorAll('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
-  const navH=h==='attendance'?'classes':h;
+  const navH=(h==='attendance'||h==='classbookings')?'classes':h;
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+navH));
   clTabs(h);
   $('t').textContent=h==='attendance'?'Classes':(CFG[h]?CFG[h].t:TITLES[h]);
@@ -1001,6 +1087,7 @@ function show(h){if(!TITLES[h]&&!CFG[h])h='dashboard';
   if(h==='plans')loadPlans();
   if(h==='trainers')loadTrainers();
   if(h==='classes')loadClasses();
+  if(h==='classbookings')loadOwnerBookings();
   if(h==='activity')loadAudit();
   if(h==='members')loadMembers();
   if(h==='attendance'){fillAttForm();loadClasses();loadAttendance();loadToday()}
@@ -1019,7 +1106,7 @@ document.addEventListener('click',e=>{
     const action=pk.dataset.pickup;
     const send=async()=>{if(busy)return;busy=true;try{
       await api('/api/owner/orders/'+o.id,'PATCH',{pickup_action:action});
-      flash(action==='picked_up'?'Order picked up':'Order ready for pickup');
+      flash(action==='picked_up'?'Order picked up':action==='preparing'?'Order is preparing':'Order ready for pickup');
       await loadOrders();
     }catch(err){flash(err.message)}finally{busy=false}};
     if(action==='picked_up')askConfirm('Confirm pickup?', 'Only confirm after the customer actually receives the product.', 'Picked Up', send);

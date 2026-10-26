@@ -6,65 +6,30 @@ use App\Models\Product;
 use App\Models\ProductOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Member\PortalController;
 
 class MemberProductController extends Controller
 {
-    // The gym this member joined. Change if your column or relation is named differently
-    private function gymId()
+    // Preserve the older endpoints, but use one authoritative purchase flow.
+    public function index(Request $request)
     {
-        return auth()->user()->gym_id;
+        $gymId = (int) $request->session()->get('fitconnect_selected_gym_id', 0);
+        abort_unless($gymId && DB::table('gyms')->where('id', $gymId)->exists(),
+            422, 'Select a gym first.');
+        $products = DB::table('products')->where('gym_id', $gymId)
+            ->where('is_active', 1)->whereRaw('stock > reserved_stock')
+            ->get(['id', 'name', 'description', 'price', 'stock', 'reserved_stock'])
+            ->map(function ($p) {
+                $p->stock = (int) $p->stock - (int) $p->reserved_stock;
+                unset($p->reserved_stock);
+                return $p;
+            });
+        return ['products' => $products];
     }
 
-    // What the gym sells (only active products that are in stock)
-    public function index()
+    public function order(Request $request)
     {
-        return [
-            'products' => Product::where('gym_id', $this->gymId())
-                ->where('is_active', true)
-                ->where('stock', '>', 0)
-                ->get(['id', 'name', 'description', 'price', 'stock']),
-        ];
-    }
-
-    // Member places an order
-    public function order(Request $r)
-    {
-        $d = $r->validate([
-            'product_id' => 'required|integer',
-            'quantity'   => 'required|integer|min:1|max:10',
-            'method'     => 'required|in:GCash,Maya,Cash',
-            'reference'  => 'nullable|string|max:60',
-        ]);
-
-        return DB::transaction(function () use ($d) {
-            // Lock the row so two members can't buy the last item at once
-            $p = Product::where('gym_id', $this->gymId())
-                ->where('is_active', true)
-                ->lockForUpdate()
-                ->findOrFail($d['product_id']);
-
-            if ($p->stock < $d['quantity']) {
-                abort(422, 'Not enough stock.');
-            }
-
-            $p->decrement('stock', $d['quantity']);
-            $p->increment('sold', $d['quantity']);
-
-            $o = ProductOrder::create([
-                'gym_id'       => $p->gym_id,
-                'user_id'      => auth()->id(),
-                'product_id'   => $p->id,
-                'product_name' => $p->name,
-                'unit_price'   => $p->price,
-                'quantity'     => $d['quantity'],
-                'total'        => $p->price * $d['quantity'],
-                'method'       => $d['method'],
-                'reference'    => $d['reference'] ?? null,
-                'status'       => 'pending',
-            ]);
-
-            return ['order' => $o, 'receipt' => $o->receipt];
-        });
+        return app(PortalController::class)->placeOrder($request);
     }
 
     // Member's own purchase history and status
@@ -80,6 +45,8 @@ class MemberProductController extends Controller
                     'quantity'   => $o->quantity,
                     'total'      => $o->total,
                     'status'     => $o->status,
+                    'fulfillment_method' => $o->fulfillment_method ?? 'pickup',
+                    'fulfillment_status' => $o->fulfillment_status,
                     'created_at' => $o->created_at,
                 ]),
         ];

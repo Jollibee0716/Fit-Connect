@@ -4,8 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\ProductOrder;
 use App\Support\Audit;
+use App\Support\ProductInventory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class OwnerOrderController extends Controller
@@ -106,7 +109,7 @@ class OwnerOrderController extends Controller
                 'nullable|in:paid,completed,cancelled',
 
             'pickup_action' =>
-                'nullable|in:ready_for_pickup,picked_up',
+                'nullable|in:preparing,ready_for_pickup,picked_up',
 
             'delivery_action' =>
                 'nullable|in:preparing,out_for_delivery,delivered',
@@ -127,7 +130,7 @@ class OwnerOrderController extends Controller
 
         $action = reset($actions);
 
-        DB::transaction(function () use (
+        $result = DB::transaction(function () use (
             $order,
             $gymId,
             $action
@@ -166,6 +169,13 @@ class OwnerOrderController extends Controller
                 // MARK PAID
                 case 'paid':
 
+                    // Xendit payments may only be confirmed by a verified webhook.
+                    abort_if(
+                        strcasecmp((string) $order->method, 'Xendit') === 0,
+                        422,
+                        'Xendit payments must be verified automatically. Manual approval is blocked.'
+                    );
+
                     abort_unless(
                         $oldStatus === 'pending',
                         422,
@@ -183,15 +193,28 @@ class OwnerOrderController extends Controller
 
                     break;
 
+                // PREPARING - pickup and delivery
+                case 'preparing':
+
+                    abort_unless(
+                        $oldStatus === 'paid' &&
+                        $state === 'awaiting_preparation',
+                        422,
+                        'Only paid orders awaiting preparation can be prepared.'
+                    );
+
+                    $order->fulfillment_status = 'preparing';
+                    break;
+
                 // READY FOR PICKUP
                 case 'ready_for_pickup':
 
                     abort_unless(
                         $method === 'pickup' &&
                         $oldStatus === 'paid' &&
-                        $state === 'awaiting_preparation',
+                        $state === 'preparing',
                         422,
-                        'Paid pickup order required.'
+                        'Pickup order must be preparing first.'
                     );
 
                     $order->fulfillment_status =
@@ -214,25 +237,11 @@ class OwnerOrderController extends Controller
                         'Order must be ready for pickup first.'
                     );
 
+                    ProductInventory::fulfill((int) $order->product_id, (int) $order->quantity);
                     $order->fulfillment_status = 'picked_up';
                     $order->picked_up_at = now();
                     $order->status = 'completed';
                     $order->completed_at = now();
-
-                    break;
-
-                // PREPARE DELIVERY
-                case 'preparing':
-
-                    abort_unless(
-                        $method === 'delivery' &&
-                        $oldStatus === 'paid' &&
-                        $state === 'awaiting_preparation',
-                        422,
-                        'Paid delivery order required.'
-                    );
-
-                    $order->fulfillment_status = 'preparing';
 
                     break;
 
@@ -255,6 +264,7 @@ class OwnerOrderController extends Controller
                         'Recipient, phone and address are required.'
                     );
 
+                    // Keep the quantity reserved until delivery is confirmed.
                     $order->fulfillment_status =
                         'out_for_delivery';
 
@@ -273,6 +283,9 @@ class OwnerOrderController extends Controller
                         'Order must be out for delivery first.'
                     );
 
+                    // Deduct physical stock and release the reservation only on delivery.
+                    // The locked order and transaction prevent double deductions.
+                    ProductInventory::fulfill((int) $order->product_id, (int) $order->quantity);
                     $order->fulfillment_status = 'delivered';
                     $order->delivered_at = now();
                     $order->status = 'completed';
@@ -299,26 +312,7 @@ class OwnerOrderController extends Controller
                         'Cannot cancel an order already dispatched.'
                     );
 
-                    $product = $order->product()
-                        ->lockForUpdate()
-                        ->first();
-
-                    abort_unless(
-                        $product,
-                        422,
-                        'Order product not found.'
-                    );
-
-                    abort_if(
-                        $product->sold < $order->quantity,
-                        422,
-                        'Inventory sold count is inconsistent.'
-                    );
-
-                    // Restore reserved inventory exactly once.
-                    $product->stock += $order->quantity;
-                    $product->sold -= $order->quantity;
-                    $product->save();
+                    ProductInventory::release((int) $order->product_id, (int) $order->quantity);
 
                     $order->status = 'cancelled';
                     $order->fulfillment_status = 'cancelled';
@@ -351,11 +345,64 @@ class OwnerOrderController extends Controller
                     'quantity' => $order->quantity,
                 ]
             );
+
+            return [
+                'id' => $order->id,
+                'old_status' => $oldStatus,
+                'old_fulfillment' => $oldFulfillment,
+                'status' => $order->status,
+                'fulfillment_status' => $order->fulfillment_status,
+                'method' => $method,
+            ];
         });
+
+        // Email happens AFTER the transaction commits. An email failure must
+        // never undo a successfully updated customer order.
+        $emailSent = false;
+        $emailError = false;
+        if ($result['old_fulfillment'] !== $result['fulfillment_status'] ||
+            $result['old_status'] !== $result['status']) {
+            $updated = ProductOrder::with('user:id,name,email')->find($result['id']);
+            $recipient = $updated?->user?->email;
+            if ($recipient) {
+                $labels = [
+                    'awaiting_preparation' => 'Awaiting preparation',
+                    'preparing' => 'Preparing your order',
+                    'ready_for_pickup' => 'Ready for pickup',
+                    'picked_up' => 'Picked up',
+                    'out_for_delivery' => 'Out for delivery',
+                    'delivered' => 'Delivered',
+                    'cancelled' => 'Cancelled',
+                ];
+                $label = $labels[$updated->fulfillment_status] ?? ucfirst((string) $updated->status);
+                $body = "Hello " . ($updated->user->name ?: 'Customer') . ",\n\n"
+                    . "Your FitConnect order {$updated->receipt} has been updated.\n"
+                    . "Product: {$updated->product_name}\n"
+                    . "Fulfillment: " . ucfirst($updated->fulfillment_method ?: 'pickup') . "\n"
+                    . "Current status: {$label}\n\n"
+                    . "Sign in to FitConnect and open My Orders to see the latest status.\n\n"
+                    . "Thank you,\nFitConnect";
+                try {
+                    Mail::raw($body, function ($message) use ($recipient, $updated, $label) {
+                        $message->to($recipient)
+                            ->subject("FitConnect {$updated->receipt} - {$label}");
+                    });
+                    $emailSent = true;
+                } catch (\Throwable $e) {
+                    $emailError = true;
+                    Log::error('FitConnect order status email failed', [
+                        'order_id' => $updated->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
 
         return response()->json([
             'ok' => true,
-            'message' => 'Order updated successfully.'
+            'message' => 'Order updated successfully.',
+            'email_sent' => $emailSent,
+            'email_failed' => $emailError,
         ]);
     }
 }

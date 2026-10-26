@@ -15,6 +15,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\RoleMiddleware::class,
         ]);
         $middleware->appendToGroup('web', \App\Http\Middleware\SetAuditUser::class);
+
+        // Xendit calls this server-to-server and cannot send a CSRF token.
+        // The controller authenticates it with the x-callback-token header instead.
+        $middleware->validateCsrfTokens(except: ['webhooks/xendit']);
+
+        // Behind a host/proxy/Cloudflare, trust forwarded headers so https:// URLs are generated.
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

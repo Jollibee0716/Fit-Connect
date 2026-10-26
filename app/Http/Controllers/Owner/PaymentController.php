@@ -77,6 +77,14 @@ class PaymentController extends Controller
                 'Membership payment not found.'
             );
 
+            // Xendit membership payments can only be finalized by
+            // server-side verification, never by manual approval/revocation.
+            abort_if(
+                strtolower((string) $payment->method) === 'xendit',
+                422,
+                'Xendit payments must be verified automatically. Manual approval is blocked.'
+            );
+
             $oldStatus = $payment->status;
 
             abort_if(
@@ -215,17 +223,27 @@ class PaymentController extends Controller
 
     /**
      * Calculate the expiration dates of accepted
-     * membership payments, oldest first.
+     * MANUAL membership payments, oldest first.
+     *
+     * Xendit payments are excluded: their due date is set once by
+     * XenditMembershipFinalizer and must never be stacked, shifted
+     * or cleared by this manual workflow.
      */
     private function recalc($userId, $gymId): void
     {
         $due = null;
+
+        $notXendit = function ($q) {
+            $q->whereNull('method')
+                ->orWhereRaw('LOWER(method) <> ?', ['xendit']);
+        };
 
         $accepted = DB::table('payments')
             ->where('user_id', $userId)
             ->where('gym_id', $gymId)
             ->where('type', 'membership')
             ->where('status', 'accepted')
+            ->where($notXendit)
             ->orderBy('paid_at')
             ->orderBy('id')
             ->lockForUpdate()
@@ -254,12 +272,13 @@ class PaymentController extends Controller
                 ]);
         }
 
-        // Remove expiration dates from nonaccepted requests.
+        // Remove expiration dates from nonaccepted manual requests.
         DB::table('payments')
             ->where('user_id', $userId)
             ->where('gym_id', $gymId)
             ->where('type', 'membership')
             ->where('status', '!=', 'accepted')
+            ->where($notXendit)
             ->update([
                 'due_date' => null,
                 'updated_at' => now(),

@@ -602,7 +602,7 @@ function renderGyms(){
     }).join('')||'<tr><td colspan="5">No gyms found</td></tr>';
 }
 function gymDetailsHTML(g){
-  return `<dl class="dl"><dt>Gym name</dt><dd><b>${esc(g.gym_name)}</b></dd><dt>Owner</dt><dd>${esc(g.owner_name)}</dd><dt>Owner email</dt><dd>${esc(g.owner_email)}</dd><dt>Phone</dt><dd>${esc(g.phone_number)}</dd><dt>Address</dt><dd>${esc(g.gym_address)}</dd><dt>Total clients</dt><dd>${g.total_clients}</dd><dt>Status</dt><dd>${gymApproved(g)?'Approved':'Pending approval'}</dd></dl>`;
+  return `<dl class="dl"><dt>Gym name</dt><dd><b>${esc(g.gym_name)}</b></dd><dt>Owner</dt><dd>${esc(g.owner_name)}</dd><dt>Owner email</dt><dd>${esc(g.owner_email)}</dd><dt>Phone</dt><dd>${esc(g.phone_number)}</dd><dt>Address</dt><dd>${esc(g.gym_address)}</dd><dt>Gym description</dt><dd style="white-space:pre-wrap">${esc(g.about||'Not provided')}</dd><dt>Opening hours</dt><dd>${esc(g.hours||'Not provided')}</dd><dt>Total clients</dt><dd>${g.total_clients}</dd><dt>Status</dt><dd>${gymApproved(g)?'Approved':'Pending approval'}</dd></dl>`;
 }
 function openGym(id){
   const g=GYMS.find(x=>x.id==id);if(!g)return;
@@ -1039,7 +1039,7 @@ function renderGymPanels(){
 function renderGymDetails(g){
   renderGymPanels();
   const members=gymMembers(g);
-  const infoPairs=[['Gym',g.gym_name],['Owner',g.owner_name],['Owner email',g.owner_email],['Phone',g.phone_number],['Address',g.gym_address],['Total registered members',members.length],['Approval status',gymApproved(g)?'Approved':'Pending']];
+  const infoPairs=[['Gym',g.gym_name],['Owner',g.owner_name],['Owner email',g.owner_email],['Phone',g.phone_number],['Address',g.gym_address],['Gym description',g.about||'Not provided'],['Opening hours',g.hours||'Not provided'],['Total registered members',members.length],['Approval status',gymApproved(g)?'Approved':'Pending']];
   $('gym-info').innerHTML=infoPairs.map(([name,value])=>`<dt>${esc(name)}</dt><dd>${esc(value??'-')}</dd>`).join('');
   const q=$('gym-member-search').value.trim().toLowerCase();
   $('gym-members-body').innerHTML=members.filter(u=>(u.name+' '+u.email).toLowerCase().includes(q)).map(u=>

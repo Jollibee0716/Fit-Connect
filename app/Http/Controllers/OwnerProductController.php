@@ -35,7 +35,12 @@ class OwnerProductController extends Controller
 
     public function index()
     {
-        return ['products' => Product::where('gym_id', $this->gymId())->latest()->get()];
+        $rows = Product::where('gym_id', $this->gymId())->latest()->get()->map(function ($product) {
+            $product->physical_stock = (int) $product->stock;
+            $product->stock = max(0, (int) $product->stock - (int) $product->reserved_stock);
+            return $product;
+        });
+        return ['products' => $rows];
     }
 
     public function store(Request $r)
@@ -49,21 +54,36 @@ class OwnerProductController extends Controller
     public function update(Request $r, Product $product)
     {
         abort_unless((int) $product->gym_id === $this->gymId(), 403);
-        $old = $product->only(['name', 'price', 'stock', 'is_active']);
-        $product->update($r->validate($this->rules()));
-        Audit::log('products', $product->id, 'updated', $product->gym_id,
-            "Edited product {$product->name}", $old,
-            $product->only(['name', 'price', 'stock', 'is_active']));
-        return ['product' => $product];
+        $data = $r->validate($this->rules());
+        return DB::transaction(function () use ($product, $data) {
+            $p = Product::whereKey($product->id)->lockForUpdate()->firstOrFail();
+            $old = $p->only(['name', 'price', 'stock', 'reserved_stock', 'is_active']);
+            // Owner edits AVAILABLE stock; physical stock = available + reservations.
+            $data['stock'] = (int) $data['stock'] + (int) $p->reserved_stock;
+            $p->update($data);
+            Audit::log('products', $p->id, 'updated', $p->gym_id,
+                "Edited product {$p->name}", $old,
+                $p->only(['name', 'price', 'stock', 'reserved_stock', 'is_active']));
+            $p->physical_stock = (int) $p->stock;
+            $p->stock = (int) $p->stock - (int) $p->reserved_stock;
+            return ['product' => $p];
+        });
     }
 
     public function destroy(Product $product)
     {
         abort_unless((int) $product->gym_id === $this->gymId(), 403);
-        Audit::log('products', $product->id, 'deleted', $product->gym_id,
-            "Deleted product {$product->name}", $product->only(['name', 'price', 'stock']));
-        $product->delete();
-        return ['ok' => true];
+        return DB::transaction(function () use ($product) {
+            $p = Product::whereKey($product->id)->lockForUpdate()->firstOrFail();
+            abort_if((int) $p->reserved_stock > 0, 422,
+                'This product has active reservations; cancel or fulfill them first.');
+            abort_if(ProductOrder::where('product_id', $p->id)->exists(), 422,
+                'Product has order history. Deactivate it instead of deleting.');
+            Audit::log('products', $p->id, 'deleted', $p->gym_id,
+                "Deleted product {$p->name}", $p->only(['name', 'price', 'stock']));
+            $p->delete();
+            return ['ok' => true];
+        });
     }
 
     // Walk-in sale at the front desk (order is completed immediately)
@@ -73,7 +93,7 @@ class OwnerProductController extends Controller
 
         return DB::transaction(function () use ($product) {
             $p = Product::lockForUpdate()->find($product->id);
-            if ($p->stock < 1) {
+            if ((int) $p->stock - (int) $p->reserved_stock < 1) {
                 abort(422, 'Out of stock');
             }
 
@@ -91,6 +111,9 @@ class OwnerProductController extends Controller
                 'status'       => 'completed',
                 'paid_at'      => now(),
                 'completed_at' => now(),
+                'fulfillment_method' => 'pickup',
+                'fulfillment_status' => 'picked_up',
+                'picked_up_at' => now(),
             ]);
 
             Audit::log('product_orders', $o->id, 'created', $p->gym_id,

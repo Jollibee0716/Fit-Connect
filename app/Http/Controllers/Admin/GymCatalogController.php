@@ -105,10 +105,21 @@ class GymCatalogController extends Controller
             })->values()->all();
         }
 
-        // COACHES
-        // Trainer management is not yet implemented.
-        // Do not query the trainers table.
-        $coaches = [];
+        // COACHES / TRAINERS: read only the selected gym's trainers.
+        if (Schema::hasTable('trainers')) {
+            $coaches = DB::table('trainers')
+                ->where('gym_id', $gymRecord->id)
+                ->orderBy('name')
+                ->get(['id', 'name', 'specialty', 'phone'])
+                ->map(fn ($trainer) => [
+                    'id' => (int) $trainer->id,
+                    'name' => $trainer->name,
+                    'specialty' => $trainer->specialty,
+                    'phone' => $trainer->phone,
+                ])
+                ->values()
+                ->all();
+        }
 
         return response()->json([
             'products' => $products,

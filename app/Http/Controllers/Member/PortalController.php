@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Member;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\ProductInventory;
 
 class PortalController extends Controller
 {
@@ -114,17 +115,22 @@ class PortalController extends Controller
             ->where('gym_id', $gymId)
             ->where('is_active', 1)
             ->orderBy('price')
-            ->get(['id', 'name', 'price', 'days']);
+            ->get(['id', 'name', 'price', 'days', 'tier']);
 
         $products = DB::table('products')
             ->where('gym_id', $gymId)
             ->where('is_active', 1)
-            ->where('stock', '>', 0)
+            ->whereRaw('stock > reserved_stock')
             ->orderBy('name')
             ->get([
                 'id', 'name', 'description',
-                'price', 'stock'
-            ]);
+                'price', 'stock', 'reserved_stock'
+            ])
+            ->map(function ($p) {
+                $p->stock = max(0, (int) $p->stock - (int) $p->reserved_stock);
+                unset($p->reserved_stock);
+                return $p;
+            });
 
         return response()->json([
             'plans' => $plans,
@@ -166,7 +172,7 @@ class PortalController extends Controller
         $data = $request->validate([
             'product_id' => 'required|integer',
             'quantity' => 'required|integer|min:1|max:10',
-            'method' => 'required|in:GCash,Maya,Cash',
+            'method' => 'required|in:GCash,Maya,Cash,Xendit',
             'reference' => 'nullable|string|max:60',
             'fulfillment_method' => 'required|in:pickup,delivery',
             'delivery_name' =>
@@ -201,19 +207,7 @@ class PortalController extends Controller
                 'Product not found in selected gym.'
             );
 
-            abort_if(
-                $product->stock < $data['quantity'],
-                422,
-                'Insufficient stock.'
-            );
-
-            DB::table('products')
-                ->where('id', $product->id)
-                ->update([
-                    'stock' => $product->stock - $data['quantity'],
-                    'sold' => $product->sold + $data['quantity'],
-                    'updated_at' => now()
-                ]);
+            ProductInventory::reserve((int) $product->id, (int) $data['quantity']);
 
             return DB::table('product_orders')
                 ->insertGetId([
