@@ -28,7 +28,7 @@ use App\Http\Controllers\AvatarMapController;
 
 use App\Http\Controllers\Member\PortalController;
 use App\Http\Controllers\Member\ProfileController as MemberProfileController;
-use App\Http\Controllers\Member\XenditMembershipController;
+use App\Http\Controllers\Member\ManualMembershipController;
 
 use App\Http\Controllers\Owner\{
     TrainerController,
@@ -109,25 +109,6 @@ Route::post('/reset-password', [
     AuthController::class,
     'resetPassword'
 ])->middleware('throttle:5,1')->name('password.update');
-
-
-/*
-|--------------------------------------------------------------------------
-| XENDIT WEBHOOK — PUBLIC ENDPOINT (TOKEN VERIFIED IN CONTROLLER)
-|--------------------------------------------------------------------------
-|
-| Xendit cannot authenticate using a member session or browser CSRF token.
-| Exclude only this URI from CSRF validation in bootstrap/app.php.
-| Never trust the request without verifying x-callback-token in the controller.
-|
-| The combined controller routes membership sessions to the membership
-| webhook and everything else to the existing product webhook.
-|
-*/
-Route::post('/webhooks/xendit', [
-    \App\Http\Controllers\XenditCombinedWebhookController::class,
-    'handle',
-])->name('xendit.webhook');
 
 
 /*
@@ -323,6 +304,8 @@ Route::middleware([
                 'sell'
             ]);
 
+            Route::get('orders/{order}/proof', [\App\Http\Controllers\OwnerOrderController::class, 'proof'])->whereNumber('order');
+
             // Pickup and Delivery Orders
             Route::get('orders', [
                 OwnerOrderController::class,
@@ -339,6 +322,12 @@ Route::middleware([
                 OwnerPaymentController::class,
                 'index'
             ]);
+
+            // Secure screenshot access for gym owners (authorization in controller)
+            Route::get('payments/{payment}/proof', [
+                ManualMembershipController::class,
+                'proof'
+            ])->whereNumber('payment');
 
             Route::patch('payments/{id}', [
                 OwnerPaymentController::class,
@@ -459,29 +448,17 @@ Route::middleware([
                 'mine'
             ]);
 
-            // Xendit: authenticated member creates checkout for their own order.
-            Route::post('xendit/checkout', [
-                \App\Http\Controllers\Member\XenditCheckoutController::class,
+            // Manual membership payment with screenshot and transaction reference
+            Route::post('membership-payments', [
+                ManualMembershipController::class,
                 'store'
             ])->middleware('throttle:10,1');
 
-            // Xendit: membership checkout and server-side verification.
-            Route::post('xendit/membership/checkout', [
-                XenditMembershipController::class,
-                'checkout'
-            ])->middleware('throttle:10,1');
-
-            Route::post('xendit/membership/verify', [
-                XenditMembershipController::class,
-                'verify'
-            ])->middleware('throttle:10,1');
-
-            // Membership Payments (now always go through Xendit checkout;
-            // the old manual MemberPaymentController@payMembership is retired).
-            Route::post('membership-payments', [
-                XenditMembershipController::class,
-                'checkout'
-            ])->middleware('throttle:10,1');
+            // Member may view their own uploaded payment proof
+            Route::get('membership-payments/{payment}/proof', [
+                ManualMembershipController::class,
+                'proof'
+            ])->whereNumber('payment');
 
             // Member Classes and Attendance
             Route::get('classes', [
@@ -547,6 +524,8 @@ Route::middleware([
                     PortalController::class,
                     'catalog'
                 ]);
+
+                Route::get('orders/{order}/proof', [\App\Http\Controllers\Member\PortalController::class, 'orderProof'])->whereNumber('order');
 
                 // Member product orders
                 Route::get('orders', [

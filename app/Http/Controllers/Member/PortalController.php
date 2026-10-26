@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Member;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use App\Support\ProductInventory;
 
 class PortalController extends Controller
@@ -166,14 +167,39 @@ class PortalController extends Controller
         ]);
     }
 
+    public function orderProof(Request $request, int $order)
+    {
+        $row = DB::table('product_orders')
+            ->where('id', $order)
+            ->where('user_id', $request->user()->id)
+            ->first();
+        abort_unless($row && $row->proof_path, 404);
+
+        $disk = Storage::disk('local');
+        abort_unless($disk->exists($row->proof_path), 404);
+
+        $path = $disk->path($row->proof_path);
+        $mime = mime_content_type($path);
+        abort_unless(in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true), 415,
+            'Payment proof is not a supported image.');
+
+        return response()->file($path, [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline',
+            'Cache-Control' => 'private, no-store, max-age=0',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     // Place a product order
     public function placeOrder(Request $request)
     {
         $data = $request->validate([
             'product_id' => 'required|integer',
             'quantity' => 'required|integer|min:1|max:10',
-            'method' => 'required|in:GCash,Maya,Cash,Xendit',
-            'reference' => 'nullable|string|max:60',
+            'method' => 'required|in:GCash,Maya,Bank Transfer',
+            'reference' => 'required|string|min:4|max:100',
+            'proof' => 'required|image|mimes:jpg,jpeg,png,webp|max:5120',
             'fulfillment_method' => 'required|in:pickup,delivery',
             'delivery_name' =>
                 'required_if:fulfillment_method,delivery|nullable|string|max:120',
@@ -189,10 +215,16 @@ class PortalController extends Controller
 
         abort_unless($gymId, 422, 'Select a gym first.');
 
+        $reference = trim($data['reference']);
+        $proofPath = $request->file('proof')->store('product-payment-proofs', 'local');
+
+        try {
         $orderId = DB::transaction(function () use (
             $data,
             $gymId,
-            $request
+            $request,
+            $reference,
+            $proofPath
         ) {
             $product = DB::table('products')
                 ->where('id', $data['product_id'])
@@ -207,6 +239,15 @@ class PortalController extends Controller
                 'Product not found in selected gym.'
             );
 
+            DB::table('gyms')->where('id', $gymId)->lockForUpdate()->first();
+            $duplicate = DB::table('product_orders')
+                ->where('gym_id', $gymId)
+                ->where('method', $data['method'])
+                ->where('reference', $reference)
+                ->whereIn('status', ['pending', 'paid', 'completed'])
+                ->exists();
+            abort_if($duplicate, 422, 'Reference number already used for this gym.');
+
             ProductInventory::reserve((int) $product->id, (int) $data['quantity']);
 
             return DB::table('product_orders')
@@ -219,7 +260,8 @@ class PortalController extends Controller
                     'quantity' => $data['quantity'],
                     'total' => $product->price * $data['quantity'],
                     'method' => $data['method'],
-                    'reference' => $data['reference'] ?? null,
+                    'reference' => $reference,
+                    'proof_path' => $proofPath,
                     'status' => 'pending',
                     'fulfillment_method' =>
                         $data['fulfillment_method'],
@@ -240,6 +282,11 @@ class PortalController extends Controller
                     'updated_at' => now()
                 ]);
         });
+
+        } catch (\Throwable $e) {
+            Storage::disk('local')->delete($proofPath);
+            throw $e;
+        }
 
         return response()->json([
             'ok' => true,

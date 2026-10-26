@@ -133,6 +133,10 @@ textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);b
 @media (max-width:760px){body{padding:0}.app{flex-direction:column;border-radius:0}.side{width:100%;border-right:0;border-bottom:1px solid var(--line)}nav{flex-direction:row;flex-wrap:wrap}.sp{display:none}.cards,.grid2{grid-template-columns:1fr 1fr}}
 @media (max-width:760px){.cards.c3{grid-template-columns:1fr}.at-form .btn{margin:0 0 10px}}
 @media (max-width:480px){.cards,.grid2{grid-template-columns:1fr}}
+/* Private payment proof preview */
+.proof-dialog{max-width:min(92vw,720px);max-height:90vh;overflow:auto}
+.proof-dialog img{display:block;max-width:100%;max-height:65vh;width:auto;height:auto;margin:12px auto;border-radius:8px;object-fit:contain}
+.proof-dialog .proof-error{color:#ff8a65;white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -187,11 +191,11 @@ textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);b
 </section>
 
 <section class="view" id="v-payments">
-  <h1>Payments</h1><p class="sub">Accept membership payments and confirm product orders.</p>
+  <h1>Payments</h1><p class="sub">Review membership payment screenshots and reference numbers before accepting payments. Product orders remain separate.</p>
   <div class="tabs" id="ktabs"></div>
   <div class="tabs" id="ptabs"></div>
   <input id="qp" placeholder="Search name, plan, product, reference" aria-label="Search payments">
-  <div class="box scroll" id="mbox"><table><thead><tr><th>Member</th><th>Plan</th><th>Amount</th><th>Method / Ref</th><th>Paid</th><th>Due</th><th>Status</th><th>Action</th></tr></thead><tbody id="pbody"></tbody></table></div>
+  <div class="box scroll" id="mbox"><table><thead><tr><th>Member</th><th>Plan</th><th>Amount</th><th>Method / Ref / Proof</th><th>Submitted</th><th>Due</th><th>Status</th><th>Action</th></tr></thead><tbody id="pbody"></tbody></table></div>
   <div class="box scroll" id="obox" hidden><table><thead><tr><th>Receipt</th><th>Member</th><th>Product</th><th>Total</th><th>Method / Ref</th><th>Status</th><th>Action</th></tr></thead><tbody id="obody"></tbody></table></div>
 </section>
 
@@ -368,6 +372,15 @@ textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);b
 </div></div>
 <div class="ov" id="fov" hidden><form class="modal" id="ff" novalidate aria-labelledby="ft"><h2 id="ft"></h2><div id="fb"></div><span class="msg" id="fe" style="color:#ff8a65;font-size:12px" hidden></span><div class="acts" style="margin-top:16px"><button class="btn ghost" type="button" id="fc">Cancel</button><button class="btn" type="submit">Save</button></div></form></div>
 <div class="toast" id="toast" role="status" hidden></div>
+<div class="ov" id="proofOverlay" hidden>
+  <div class="modal proof-dialog" role="dialog" aria-modal="true" aria-labelledby="proofTitle">
+    <h2 id="proofTitle">Payment screenshot</h2>
+    <p id="proofMessage" aria-live="polite">Loading screenshot...</p>
+    <img id="proofImage" alt="Uploaded payment receipt" hidden>
+    <p id="proofError" class="proof-error" hidden></p>
+    <div class="acts"><button type="button" class="btn ghost" id="proofClose">Close</button></div>
+  </div>
+</div>
 
 @verbatim
 <script>
@@ -495,7 +508,7 @@ function render(){
   const soon=infos.filter(x=>x.i.state==='active'&&x.i.due&&daysTo(x.i.due)<=7).sort((a,b)=>a.i.due.localeCompare(b.i.due));
   const over=infos.filter(x=>x.i.state==='overdue'&&x.i.due);
   let a='';
-  pend.slice(0,4).forEach(p=>a+=`<div class="att"><div>${esc(p.name)}<br><small>${money(p.amount)} · ${esc(p.plan)} waiting for approval</small></div><button class="btn sm" type="button" data-pay="accept" data-id="${p.id}">Accept</button></div>`);
+  pend.slice(0,4).forEach(p=>a+=`<div class="att"><div>${esc(p.name)}<br><small>${money(p.amount)} · ${esc(p.plan)} waiting for verification</small></div><a class="btn sm ghost" href="#payments">Review</a></div>`);
   ordPend.slice(0,3).forEach(o=>a+=`<div class="att"><div>${esc(o.name)}<br><small>${money(o.total)} · ${esc(o.product)} order waiting</small></div><a class="btn sm" href="#orders" data-goorders>Review</a></div>`);
   soon.slice(0,3).forEach(({u,i})=>a+=`<div class="att"><div>${esc(u.name)}<br><small>Expires ${daysTo(i.due)===0?'today':'in '+daysTo(i.due)+' days'}</small></div><span class="tag pending">Expiring</span></div>`);
   over.slice(0,3).forEach(({u,i})=>a+=`<div class="att"><div>${esc(u.name)}<br><small>${Math.abs(daysTo(i.due))} days overdue</small></div><span class="tag rej">Overdue</span></div>`);
@@ -566,14 +579,15 @@ function renderPayments(){
     $('pbody').innerHTML=PAY.filter(p=>(pTab==='all'||p.status==='pending')&&[p.name,p.plan,p.method,p.reference].join(' ').toLowerCase().includes(q)).map(p=>{
       const s=PS[p.status]||PS.pending;
       const acc=p.status==='pending'?`<button class="btn sm" type="button" data-pay="accept" data-id="${p.id}">Accept</button>`:'';
+      const proof=p.proof_path ? `<button class="lnk" type="button" data-proof-type="membership" data-proof-id="${Number(p.id)}">View payment screenshot</button>` : `<span class="tag rej">No screenshot</span>`;
       const rev=p.status!=='revoked'?`<button class="btn sm ghost" type="button" data-pay="revoke" data-id="${p.id}">Revoke</button>`:'';
-      return `<tr><td>${who(p.name,p.user_id,esc(p.name))}</td><td>${esc(p.plan)}</td><td class="nowrap">${money(p.amount)}</td><td>${esc(p.method||'-')}<small>${esc(p.reference||'')}</small></td><td class="nowrap">${fd(p.paid_at)}</td><td class="nowrap">${p.status==='accepted'?fd(p.due_date):'-'}</td><td><span class="tag ${s[1]}">${s[0]}</span></td><td><div class="acts">${acc}${rev}</div></td></tr>`;
+      return `<tr><td>${who(p.name,p.user_id,esc(p.name))}</td><td>${esc(p.plan)}</td><td class="nowrap">${money(p.amount)}</td><td>${esc(p.method||'-')}<small>Ref: ${esc(p.reference||'-')}</small><small>${proof}</small></td><td class="nowrap">${fd(p.paid_at)}</td><td class="nowrap">${p.status==='accepted'?fd(p.due_date):'-'}</td><td><span class="tag ${s[1]}">${s[0]}</span></td><td><div class="acts">${acc}${rev}</div></td></tr>`;
     }).join('')||`<tr><td colspan="8" class="empty">${pTab==='pending'?'No payments waiting for approval':'No payments found'}</td></tr>`;
     return;
   }
   $('obody').innerHTML=ORDERS.filter(o=>(pTab==='all'||o.status==='pending')&&[o.name,o.product,o.method,o.reference,o.receipt].join(' ').toLowerCase().includes(q)).map(o=>{
     const s=OS[o.status]||OS.pending;let a='';
-    if(o.status==='pending')a+=`<button class="btn sm" type="button" data-ord="paid" data-id="${o.id}">Mark paid</button>`;
+    if(o.status==='pending' && o.proof_path && o.reference)a+=`<button class="btn sm" type="button" data-ord="paid" data-id="${o.id}">Mark paid</button>`;
     if(o.status==='paid' && (o.fulfillment_method||'pickup')==='pickup'){
       if(!o.fulfillment_status || o.fulfillment_status==='awaiting_preparation')a+=`<button class="btn sm" type="button" data-pickup="preparing" data-id="${o.id}">Prepare Order</button>`;
       if(o.fulfillment_status==='preparing')a+=`<button class="btn sm" type="button" data-pickup="ready_for_pickup" data-id="${o.id}">Ready for Pickup</button>`;
@@ -589,7 +603,7 @@ function renderPayments(){
       if(st==='out_for_delivery')a+=`<button class="btn sm" type="button" data-delivery="delivered" data-id="${o.id}">Delivered</button>`;
     }
     if((o.status==='pending'||o.status==='paid') && !(o.fulfillment_method==='delivery' && o.fulfillment_status==='out_for_delivery'))a+=`<button class="btn sm ghost" type="button" data-ord="cancelled" data-id="${o.id}">Cancel Order</button>`;
-    return `<tr><td class="nowrap">${esc(o.receipt)}<small>${fd(o.created_at)}</small></td><td>${who(o.name,o.user_id,esc(o.name))}</td><td>${esc(o.product)} × ${o.quantity}<small>${esc((o.fulfillment_method||'pickup')==='pickup'?'Gym pickup':'Delivery')} · ${esc(o.fulfillment_status||'Awaiting preparation')}${o.fulfillment_method==='delivery'?`<br>📍 ${esc(o.delivery_address||'Address missing')}<br>☎ ${esc(o.delivery_phone||'Phone missing')}${o.delivery_notes?`<br>Note: ${esc(o.delivery_notes)}`:''}`:''}</small></td><td class="nowrap">${money(o.total)}</td><td>${esc(o.method||'-')}<small>${esc(o.reference||'')}</small></td><td><span class="tag ${s[1]}">${s[0]}</span><small>${esc((o.fulfillment_status||"awaiting_preparation").replace(/_/g," "))}</small></td><td><div class="acts">${a}</div></td></tr>`;
+    return `<tr><td class="nowrap">${esc(o.receipt)}<small>${fd(o.created_at)}</small></td><td>${who(o.name,o.user_id,esc(o.name))}</td><td>${esc(o.product)} × ${o.quantity}<small>${esc((o.fulfillment_method||'pickup')==='pickup'?'Gym pickup':'Delivery')} · ${esc(o.fulfillment_status||'Awaiting preparation')}${o.fulfillment_method==='delivery'?`<br>📍 ${esc(o.delivery_address||'Address missing')}<br>☎ ${esc(o.delivery_phone||'Phone missing')}${o.delivery_notes?`<br>Note: ${esc(o.delivery_notes)}`:''}`:''}</small></td><td class="nowrap">${money(o.total)}</td><td>${esc(o.method||'-')}<small>Ref: ${esc(o.reference||'-')}</small><small>${o.proof_path?`<button class="lnk" type="button" data-proof-type="product" data-proof-id="${Number(o.id)}">View payment screenshot</button>`:'No screenshot uploaded'}</small></td><td><span class="tag ${s[1]}">${s[0]}</span><small>${esc((o.fulfillment_status||"awaiting_preparation").replace(/_/g," "))}</small></td><td><div class="acts">${a}</div></td></tr>`;
   }).join('')||`<tr><td colspan="7" class="empty">${pTab==='pending'?'No orders waiting for confirmation':'No product orders yet'}</td></tr>`;
 }
 
@@ -1095,7 +1109,67 @@ function show(h){if(!TITLES[h]&&!CFG[h])h='dashboard';
   if(h==='messages'){renderMail();renderThread();refreshChat()}
   window.scrollTo(0,0)}
 window.addEventListener('hashchange',()=>show(location.hash.slice(1)));
+let proofObjectUrl=null;
+let proofAbort=null;
+function closeProof(){
+  if(proofAbort){proofAbort.abort();proofAbort=null;}
+  if(proofObjectUrl){URL.revokeObjectURL(proofObjectUrl);proofObjectUrl=null;}
+  $('proofImage').removeAttribute('src');
+  $('proofImage').hidden=true;
+  $('proofOverlay').hidden=true;
+}
+async function viewPaymentProof(type,id){
+  if(!Number.isSafeInteger(id)||id<1)return;
+  closeProof();
+  $('proofTitle').textContent=(type==='membership'?'Membership payment #':'Product order #')+id;
+  $('proofMessage').textContent='Loading screenshot...';
+  $('proofError').hidden=true;
+  $('proofOverlay').hidden=false;
+  proofAbort=new AbortController();
+  const controller=proofAbort;
+  const url=type==='membership'
+    ? `/api/owner/payments/${id}/proof`
+    : `/api/owner/orders/${id}/proof`;
+  try{
+    const response=await fetch(url,{
+      credentials:'same-origin',
+      headers:{'Accept':'image/jpeg,image/png,image/webp'},
+      cache:'no-store',
+      signal:controller.signal
+    });
+    if(!response.ok){
+      throw new Error(`Screenshot request returned HTTP ${response.status}. `+
+        (response.status===403?'Your account is not authorized for this gym.':
+         response.status===404?'The payment proof or route was not found.':
+         response.status===401||response.status===302?'Please log in through the same Laravel address.':''));
+    }
+    const blob=await response.blob();
+    if(!['image/jpeg','image/png','image/webp'].includes(blob.type)){
+      throw new Error(`The server returned ${blob.type||'unknown content'} instead of a supported image. Check the Laravel login session and response headers.`);
+    }
+    if(controller.signal.aborted)return;
+    proofObjectUrl=URL.createObjectURL(blob);
+    const img=$('proofImage');
+    img.onload=()=>{$('proofMessage').textContent='Uploaded payment screenshot';img.hidden=false;};
+    img.onerror=()=>{$('proofMessage').textContent='Unable to display this image.';$('proofError').textContent='The returned image could not be decoded.';$('proofError').hidden=false;};
+    img.src=proofObjectUrl;
+  }catch(err){
+    if(err.name==='AbortError')return;
+    $('proofMessage').textContent='Screenshot unavailable';
+    $('proofError').textContent=err.message;
+    $('proofError').hidden=false;
+  }finally{if(proofAbort===controller)proofAbort=null;}
+}
+$('proofClose').onclick=closeProof;
+$('proofOverlay').addEventListener('click',e=>{if(e.target===$('proofOverlay'))closeProof();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('proofOverlay').hidden)closeProof();});
 document.addEventListener('click',e=>{
+  const proofButton=e.target.closest('[data-proof-type]');
+  if(proofButton){
+    const type=proofButton.dataset.proofType;
+    if(type==='membership'||type==='product')viewPaymentProof(type,Number(proofButton.dataset.proofId));
+    return;
+  }
   const kd=e.target.closest('[data-kind]');
   if(kd){pKind=kd.dataset.kind;pTab='pending';renderPayments();return}
   const go=e.target.closest('[data-goorders]');
@@ -1136,7 +1210,15 @@ document.addEventListener('click',e=>{
     return;
   }
   const pa=e.target.closest('[data-pay]');
-  if(pa){pa.dataset.pay==='accept'?setPay(pa.dataset.id,'accepted'):askRevoke(pa.dataset.id);return}
+  if(pa){
+    if(pa.dataset.pay==='accept'){
+      const p=PAY.find(x=>x.id==pa.dataset.id);
+      if(!p)return;
+      if(!p.proof_path){flash('Payment has no uploaded screenshot. Cannot approve without proof.');return;}
+      askConfirm('Accept membership payment?', 'Check the uploaded screenshot, transaction reference, and confirm the funds actually reached your account before accepting. Member: '+p.name+'; Reference: '+(p.reference||'-')+'; Amount: '+money(p.amount), 'Accept Payment', ()=>setPay(p.id,'accepted'));
+    }else askRevoke(pa.dataset.id);
+    return;
+  }
   const pt=e.target.closest('[data-ptab]');if(pt){pTab=pt.dataset.ptab;renderPayments();return}
   const mt=e.target.closest('[data-mtab]');if(mt){mTab=mt.dataset.mtab;render()}
 });

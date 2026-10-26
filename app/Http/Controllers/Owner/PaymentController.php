@@ -7,9 +7,13 @@ use App\Support\Audit;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class PaymentController extends Controller
 {
+    /**
+     * Get the gyms belonging to the logged-in owner.
+     */
     private function gymIds($user)
     {
         $go = $user->gymOwner;
@@ -21,11 +25,17 @@ class PaymentController extends Controller
             : collect();
     }
 
+    /**
+     * Display membership payments for this gym owner.
+     */
     public function index(Request $request)
     {
         $payments = DB::table('payments as p')
             ->join('users as u', 'u.id', '=', 'p.user_id')
-            ->whereIn('p.gym_id', $this->gymIds($request->user()))
+            ->whereIn(
+                'p.gym_id',
+                $this->gymIds($request->user())
+            )
             ->where('p.type', 'membership')
             ->orderByDesc('p.id')
             ->get([
@@ -38,20 +48,24 @@ class PaymentController extends Controller
                 'p.amount',
                 'p.method',
                 'p.reference',
+                'p.proof_path',
                 'p.paid_at',
                 'p.due_date',
-                'p.status'
+                'p.status',
             ]);
 
         return response()->json([
-            'payments' => $payments
+            'payments' => $payments,
         ]);
     }
 
+    /**
+     * Accept or revoke a manual membership payment.
+     */
     public function update(Request $request, $id)
     {
         $validated = $request->validate([
-            'status' => 'required|in:accepted,revoked'
+            'status' => 'required|in:accepted,revoked',
         ]);
 
         $newStatus = $validated['status'];
@@ -61,6 +75,7 @@ class PaymentController extends Controller
             $id,
             $newStatus
         ) {
+            // Only the correct gym owner can update payment.
             $payment = DB::table('payments')
                 ->where('id', $id)
                 ->where('type', 'membership')
@@ -77,12 +92,13 @@ class PaymentController extends Controller
                 'Membership payment not found.'
             );
 
-            // Xendit membership payments can only be finalized by
-            // server-side verification, never by manual approval/revocation.
+            // Protect historical Xendit transactions.
             abort_if(
-                strtolower((string) $payment->method) === 'xendit',
+                strtolower(
+                    trim((string) $payment->method)
+                ) === 'xendit',
                 422,
-                'Xendit payments must be verified automatically. Manual approval is blocked.'
+                'Historical Xendit payments cannot be manually changed.'
             );
 
             $oldStatus = $payment->status;
@@ -93,7 +109,7 @@ class PaymentController extends Controller
                 'Payment already has this status.'
             );
 
-            // Revoked payments cannot be reaccepted.
+            // A revoked payment cannot be accepted again.
             abort_if(
                 $oldStatus === 'revoked' &&
                 $newStatus === 'accepted',
@@ -101,18 +117,36 @@ class PaymentController extends Controller
                 'Revoked payments cannot be accepted again.'
             );
 
-            // Only pending payments may become accepted.
             if ($newStatus === 'accepted') {
+
+                // Only pending payments may be accepted.
                 abort_unless(
                     $oldStatus === 'pending',
                     422,
                     'Only pending payments can be accepted.'
                 );
 
+                // Check membership duration.
                 abort_unless(
                     (int) $payment->plan_days > 0,
                     422,
                     'Membership plan duration is invalid.'
+                );
+
+                // Check reference number.
+                abort_if(
+                    !trim((string) $payment->reference),
+                    422,
+                    'A transaction reference number is required.'
+                );
+
+                // Check the uploaded screenshot exists.
+                abort_if(
+                    !$payment->proof_path ||
+                    !Storage::disk('local')
+                        ->exists($payment->proof_path),
+                    422,
+                    'A valid uploaded payment screenshot is required before approval.'
                 );
             }
 
@@ -121,8 +155,7 @@ class PaymentController extends Controller
                 'updated_at' => now(),
             ];
 
-            // The membership starts on acceptance,
-            // not when the payment request was submitted.
+            // Membership starts on owner acceptance.
             if ($newStatus === 'accepted') {
                 $updates['paid_at'] = today()->toDateString();
             }
@@ -131,6 +164,7 @@ class PaymentController extends Controller
                 ->where('id', $payment->id)
                 ->update($updates);
 
+            // Automatically enroll the member after approval.
             if ($newStatus === 'accepted') {
                 $this->enrollMember(
                     (int) $payment->user_id,
@@ -138,7 +172,7 @@ class PaymentController extends Controller
                 );
             }
 
-            // Recalculate the membership expiration.
+            // Recalculate expiration without stacking days.
             $this->recalc(
                 $payment->user_id,
                 $payment->gym_id
@@ -148,39 +182,41 @@ class PaymentController extends Controller
                 ->where('id', $payment->user_id)
                 ->value('name') ?? 'Member';
 
+            // Record the action in audit logs.
             Audit::log(
                 'payments',
                 $payment->id,
                 'updated',
                 (int) $payment->gym_id,
-                'Membership payment ' . $newStatus .
-                ' for ' . $name,
+                'Membership payment ' .
+                    $newStatus . ' for ' . $name,
                 [
-                    'status' => $oldStatus
+                    'status' => $oldStatus,
                 ],
                 [
                     'status' => $newStatus,
                     'plan' => $payment->plan,
-                    'amount' => $payment->amount
+                    'amount' => $payment->amount,
                 ]
             );
-        });
+        }, 3);
 
         return response()->json([
             'ok' => true,
             'message' => $newStatus === 'accepted'
                 ? 'Payment accepted. Membership activated successfully.'
-                : 'Membership payment revoked successfully.'
+                : 'Membership payment revoked successfully.',
         ]);
     }
 
     /**
-     * Automatically enroll the paying member
-     * in the gym after payment acceptance.
+     * Enroll the member in the gym after payment approval.
      */
-    private function enrollMember(int $userId, int $gymId): void
-    {
-        // Lock the user to serialize enrollment updates.
+    private function enrollMember(
+        int $userId,
+        int $gymId
+    ): void {
+        // Lock member user before enrollment changes.
         DB::table('users')
             ->where('id', $userId)
             ->lockForUpdate()
@@ -193,6 +229,7 @@ class PaymentController extends Controller
             ->first();
 
         if ($member) {
+
             $updates = [
                 'gym_id' => $gymId,
                 'updated_at' => now(),
@@ -202,7 +239,8 @@ class PaymentController extends Controller
                 (int) $member->gym_id !== $gymId ||
                 !$member->join_date
             ) {
-                $updates['join_date'] = today()->toDateString();
+                $updates['join_date'] =
+                    today()->toDateString();
             }
 
             DB::table('members')
@@ -222,63 +260,79 @@ class PaymentController extends Controller
     }
 
     /**
-     * Calculate the expiration dates of accepted
-     * MANUAL membership payments, oldest first.
+     * Permanent membership expiration rule.
      *
-     * Xendit payments are excluded: their due date is set once by
-     * XenditMembershipFinalizer and must never be stacked, shifted
-     * or cleared by this manual workflow.
+     * Each accepted manual payment expires exactly
+     * plan_days after its own acceptance date.
+     *
+     * Example:
+     * Accepted: 2026-10-26
+     * Duration: 365 days
+     * Expires: 2027-10-26
+     *
+     * No stacking of previous membership periods.
+     * Historical Xendit payments remain unchanged.
      */
-    private function recalc($userId, $gymId): void
-    {
-        $due = null;
-
-        $notXendit = function ($q) {
-            $q->whereNull('method')
-                ->orWhereRaw('LOWER(method) <> ?', ['xendit']);
+    private function recalc(
+        $userId,
+        $gymId
+    ): void {
+        // Exclude historical Xendit payment records.
+        $manualPayments = function ($query) {
+            $query->whereNull('method')
+                ->orWhereRaw(
+                    'LOWER(method) <> ?',
+                    ['xendit']
+                );
         };
 
+        // Get accepted manual payments only.
         $accepted = DB::table('payments')
             ->where('user_id', $userId)
             ->where('gym_id', $gymId)
             ->where('type', 'membership')
             ->where('status', 'accepted')
-            ->where($notXendit)
-            ->orderBy('paid_at')
+            ->where($manualPayments)
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
-        foreach ($accepted as $row) {
-            $paid = Carbon::parse($row->paid_at)
-                ->startOfDay();
+        foreach ($accepted as $payment) {
 
-            $start = (
-                $due !== null &&
-                $due->greaterThan($paid)
-            )
-                ? $due->copy()
-                : $paid->copy();
+            if (
+                !$payment->paid_at ||
+                (int) $payment->plan_days <= 0
+            ) {
+                continue;
+            }
 
-            $due = $start->addDays(
-                (int) $row->plan_days
-            );
+            // Start from the payment acceptance date.
+            $start = Carbon::parse(
+                $payment->paid_at
+            )->startOfDay();
+
+            // Add only this payment's plan duration.
+            $expiration = $start->copy()
+                ->addDays(
+                    (int) $payment->plan_days
+                )
+                ->toDateString();
 
             DB::table('payments')
-                ->where('id', $row->id)
+                ->where('id', $payment->id)
                 ->update([
-                    'due_date' => $due->toDateString(),
+                    'due_date' => $expiration,
                     'updated_at' => now(),
                 ]);
         }
 
-        // Remove expiration dates from nonaccepted manual requests.
+        // Pending and revoked payments cannot have due dates.
         DB::table('payments')
             ->where('user_id', $userId)
             ->where('gym_id', $gymId)
             ->where('type', 'membership')
             ->where('status', '!=', 'accepted')
-            ->where($notXendit)
+            ->where($manualPayments)
             ->update([
                 'due_date' => null,
                 'updated_at' => now(),

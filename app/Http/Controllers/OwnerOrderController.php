@@ -7,6 +7,7 @@ use App\Support\Audit;
 use App\Support\ProductInventory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -52,6 +53,7 @@ class OwnerOrderController extends Controller
                 'total' => $o->total,
                 'method' => $o->method,
                 'reference' => $o->reference,
+                'proof_path' => $o->proof_path,
                 'status' => $o->status,
                 'paid_at' => $o->paid_at,
                 'completed_at' => $o->completed_at,
@@ -91,6 +93,51 @@ class OwnerOrderController extends Controller
 
         return response()->json([
             'orders' => $orders
+        ]);
+    }
+
+    public function proof(ProductOrder $order)
+    {
+        // Only the owner of the order's gym can view its private payment proof.
+        abort_unless(
+            (int) $order->gym_id === $this->gymId(),
+            403,
+            'Unauthorized access to payment screenshot.'
+        );
+
+        abort_unless($order->proof_path, 404, 'No screenshot attached.');
+
+        $disk = Storage::disk('local');
+        abort_unless(
+            $disk->exists($order->proof_path),
+            404,
+            'Screenshot file not found.'
+        );
+
+        $path = $disk->path($order->proof_path);
+        abort_unless(
+            is_file($path) && is_readable($path),
+            404,
+            'Screenshot is not readable.'
+        );
+
+        $mime = mime_content_type($path);
+        abort_unless(
+            in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true),
+            415,
+            'Unsupported screenshot format.'
+        );
+
+        // Return the exact image bytes directly instead of a BinaryFileResponse.
+        $contents = file_get_contents($path);
+        abort_if($contents === false, 500, 'Could not read screenshot.');
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline',
+            'Content-Length' => strlen($contents),
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
         ]);
     }
 
@@ -182,7 +229,13 @@ class OwnerOrderController extends Controller
                         'Only pending orders can be marked paid.'
                     );
 
-                    // Owner must verify actual payment.
+                    abort_unless(
+                        $order->proof_path && filled($order->reference) &&
+                        Storage::disk('local')->exists($order->proof_path),
+                        422, 'Payment screenshot and reference number required.'
+                    );
+
+                    // Owner must independently verify actual funds received.
                     $order->status = 'paid';
                     $order->paid_at = now();
 

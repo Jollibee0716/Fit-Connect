@@ -292,9 +292,9 @@ nav.menu .nav.active{background:var(--accent);color:var(--navtxt)}
   <div class="gridhead"><h2>Products</h2><button type="button" class="button outline" onclick="showTab('products')">Shop All Products →</button></div>
   <div id="gymProductsPreview" class="cards"></div>
 </section>
-<section id="page-plans" class="page hidden"><div class="eyebrow">MEMBERSHIPS</div><h1>Choose Your Plan</h1><p>Choose a gym first, then pay for a membership securely with Xendit. Your membership activates once the payment is verified.</p><div id="plansGrid" class="cards"></div></section>
+<section id="page-plans" class="page hidden"><div class="eyebrow">MEMBERSHIPS</div><h1>Choose Your Plan</h1><p>Choose a gym first, make payment using the gym’s verified payment details, then upload your screenshot and reference number. Membership activates after gym owner approval.</p><div id="plansGrid" class="cards"></div></section>
 <section id="page-products" class="page hidden"><div class="eyebrow">FITNESS SHOP</div><h1>Shop Products</h1><p>No active membership required. Select a gym to see its available products.</p><div id="productsGrid" class="cards"></div></section>
-<section id="page-orders" class="page hidden"><div class="eyebrow">PURCHASES</div><h1>My Orders</h1><button type="button" class="button" id="refreshXenditOrders" onclick="run(loadOrders)" style="margin:12px 0">Refresh Orders</button><div id="ordersList" class="card"></div></section>
+<section id="page-orders" class="page hidden"><div class="eyebrow">PURCHASES</div><h1>My Orders</h1><button type="button" class="button" id="refreshOrders" onclick="run(loadOrders)" style="margin:12px 0">Refresh Orders</button><div id="ordersList" class="card"></div></section>
 <section id="page-payments" class="page hidden"><div class="eyebrow">TRANSACTIONS</div><h1>Membership Payments</h1><div id="paymentsList" class="card"></div></section>
 <section id="page-classes" class="page hidden">
   <div class="eyebrow">FITNESS ACTIVITIES</div>
@@ -393,6 +393,25 @@ nav.menu .nav.active{background:var(--accent);color:var(--navtxt)}
   </div>
 </section>
 </div></main></div>
+<div id="manualPaymentDialog" class="ov" hidden role="dialog" aria-modal="true" aria-labelledby="manualPaymentHeading">
+  <div class="modal" style="max-width:480px;max-height:90vh;overflow:auto">
+    <h2 id="manualPaymentHeading">Submit Membership Payment</h2>
+    <p><strong id="manualPaymentGym"></strong><br><span id="manualPaymentPlan"></span></p>
+    <p>Pay using the gym owner's confirmed GCash, Maya, or bank details before uploading proof. A screenshot alone does not activate your membership.</p>
+    <form id="manualPaymentForm">
+      <label class="fld">Payment method
+        <select id="manualMethod" required><option value="GCash">GCash</option><option value="Maya">Maya</option><option value="Bank Transfer">Bank Transfer</option></select>
+      </label>
+      <label class="fld">Transaction reference number
+        <input id="manualReference" type="text" minlength="4" maxlength="100" placeholder="Reference from your payment receipt" required style="width:100%;max-width:none;margin:4px 0">
+      </label>
+      <label class="fld">Payment screenshot (JPG, PNG or WEBP, max 5 MB)
+        <input id="manualProof" type="file" accept="image/jpeg,image/png,image/webp" required style="width:100%;max-width:none;margin:4px 0">
+      </label>
+      <div class="acts"><button type="button" class="btn ghost" onclick="closeManualPayment()">Cancel</button><button id="manualSubmit" type="submit" class="btn">Submit for Approval</button></div>
+    </form>
+  </div>
+</div>
 <script>
 const API='/api/member';let selectedGym=null,gyms=[],catalog={plans:[],products:[]};
 let currentMembership={active:false,status:'none',plan:null,due_date:null,start_date:null};
@@ -510,7 +529,7 @@ function renderMembershipStatus(){
         <span class="tag ${currentMembership.active?'':currentMembership.status==='pending'?'pending':'off'}">${safe(text)}</span>
         ${currentMembership.active?`<p style="margin-top:10px">Plan: <strong>${safe(currentMembership.plan||'-')}</strong></p>
           <p>Valid until: <strong>${safe(currentMembership.due_date||'-')}</strong></p>`:
-          `<p style="margin-top:10px">${currentMembership.status==='pending'?'Your membership payment has not been verified yet. Open Payments and click Verify Xendit Payment after paying.':
+          `<p style="margin-top:10px">${currentMembership.status==='pending'?'Your payment proof is awaiting approval from the gym owner. You can check its status under Payments.':
           currentMembership.status==='expired'?'Your previous membership has expired.':'Choose a plan to pay for membership.'}</p>`}`;
     }
   }
@@ -523,35 +542,57 @@ async function loadOverview(){
   renderMembershipStatus();
   renderGym();
 }
-async function loadCatalog(){if(!selectedGym){catalog={plans:[],products:[]};$('plansGrid').innerHTML=cardEmpty('Select a gym first in Explore Gyms.');$('productsGrid').innerHTML=cardEmpty('Select a gym first in Explore Gyms.');return}catalog=await request('/portal/catalog');$('plansGrid').innerHTML=catalog.plans.map(p=>`<article class="card"><div class="tile">🎟️</div><h3>${safe(p.name)}</h3><div class="price">${money(p.price)}</div><p>${Number(p.days)} days of membership</p><span class="tag">${safe(selectedGym.name)}</span><div class="checkout"><span class="tag">Xendit secure checkout</span><p>Tier ${Number(p.tier||1)} · ${Number(p.days)} days</p><button class="button" onclick="buyPlan(${Number(p.id)})">Pay with Xendit</button></div></article>`).join('')||cardEmpty('No active membership plans for this gym.');$('productsGrid').innerHTML=catalog.products.map(p=>`<article class="card"><div class="tile">🛍️</div><h3>${safe(p.name)}</h3><p>${safe(p.description||'Gym product')}</p><div class="price">${money(p.price)}</div><span class="tag">${Number(p.stock)} in stock</span><div class="checkout"><label>Quantity</label><input class="input" type="number" min="1" max="${Math.min(10,Number(p.stock))}" value="1" id="quantity-${p.id}"><label>Payment method</label><select class="select" id="method-${p.id}"><option value="Xendit">Xendit (online checkout)</option><option>GCash</option><option>Maya</option><option>Cash</option></select><label for="fulfill-${p.id}">Receive product</label><select class="select" id="fulfill-${p.id}" onchange="toggleDelivery(${Number(p.id)})"><option value="pickup">Pickup at gym</option><option value="delivery">Delivery</option></select><div id="delivery-${p.id}" hidden><label for="dname-${p.id}">Recipient name</label><input class="input" id="dname-${p.id}" maxlength="120" placeholder="Full name"><label for="dphone-${p.id}">Contact number</label><input class="input" id="dphone-${p.id}" maxlength="30" placeholder="Phone number"><label for="daddress-${p.id}">Delivery address</label><textarea class="input" id="daddress-${p.id}" maxlength="500" placeholder="Complete delivery address"></textarea><label for="dnotes-${p.id}">Delivery notes (optional)</label><textarea class="input" id="dnotes-${p.id}" maxlength="500" placeholder="Additional delivery instructions"></textarea></div><button class="button" onclick="buyProduct(${Number(p.id)})">Place Order</button></div></article>`).join('')||cardEmpty('No products in stock for this gym.')}
-async function buyPlan(id){
-  await run(async()=>{
-    const result=await request('/xendit/membership/checkout',{
-      method:'POST',body:JSON.stringify({plan_id:id})
+async function loadCatalog(){if(!selectedGym){catalog={plans:[],products:[]};$('plansGrid').innerHTML=cardEmpty('Select a gym first in Explore Gyms.');$('productsGrid').innerHTML=cardEmpty('Select a gym first in Explore Gyms.');return}catalog=await request('/portal/catalog');$('plansGrid').innerHTML=catalog.plans.map(p=>`<article class="card"><div class="tile">🎟️</div><h3>${safe(p.name)}</h3><div class="price">${money(p.price)}</div><p>${Number(p.days)} days of membership</p><span class="tag">${safe(selectedGym.name)}</span><div class="checkout"><span class="tag">Manual payment verification</span><p>Tier ${Number(p.tier||1)} · ${Number(p.days)} days</p><button class="button" onclick="buyPlan(${Number(p.id)})">Submit Payment Proof</button></div></article>`).join('')||cardEmpty('No active membership plans for this gym.');$('productsGrid').innerHTML=catalog.products.map(p=>`<article class="card"><div class="tile">🛍️</div><h3>${safe(p.name)}</h3><p>${safe(p.description||'Gym product')}</p><div class="price">${money(p.price)}</div><span class="tag">${Number(p.stock)} in stock</span><div class="checkout"><label>Quantity</label><input class="input" type="number" min="1" max="${Math.min(10,Number(p.stock))}" value="1" id="quantity-${p.id}"><label>Payment method</label><select class="select" id="method-${p.id}"><option>GCash</option><option>Maya</option><option>Bank Transfer</option></select><label>Transaction reference number</label><input class="input" id="orderref-${p.id}" maxlength="100" minlength="4" required placeholder="Enter transaction reference"><label>Payment screenshot (max 5 MB)</label><input class="input" id="orderproof-${p.id}" type="file" accept="image/jpeg,image/png,image/webp" required><label for="fulfill-${p.id}">Receive product</label><select class="select" id="fulfill-${p.id}" onchange="toggleDelivery(${Number(p.id)})"><option value="pickup">Pickup at gym</option><option value="delivery">Delivery</option></select><div id="delivery-${p.id}" hidden><label for="dname-${p.id}">Recipient name</label><input class="input" id="dname-${p.id}" maxlength="120" placeholder="Full name"><label for="dphone-${p.id}">Contact number</label><input class="input" id="dphone-${p.id}" maxlength="30" placeholder="Phone number"><label for="daddress-${p.id}">Delivery address</label><textarea class="input" id="daddress-${p.id}" maxlength="500" placeholder="Complete delivery address"></textarea><label for="dnotes-${p.id}">Delivery notes (optional)</label><textarea class="input" id="dnotes-${p.id}" maxlength="500" placeholder="Additional delivery instructions"></textarea></div><button class="button" onclick="buyProduct(${Number(p.id)})">Place Order</button></div></article>`).join('')||cardEmpty('No products in stock for this gym.')}
+let pendingMembershipPlan = null;
+function buyPlan(id){
+  const plan=(catalog.plans||[]).find(p=>Number(p.id)===Number(id));
+  if(!selectedGym||!plan){notify('Select a gym and an available membership plan first.',true);return;}
+  pendingMembershipPlan=plan;
+  $('manualPaymentPlan').textContent=plan.name+' — '+money(plan.price);
+  $('manualPaymentGym').textContent=selectedGym.name;
+  $('manualPaymentForm').reset();
+  $('manualPaymentDialog').hidden=false;
+  $('manualReference').focus();
+}
+function closeManualPayment(){
+  if($('manualSubmit').disabled)return;
+  $('manualPaymentDialog').hidden=true;
+  pendingMembershipPlan=null;
+}
+$('manualPaymentForm').addEventListener('submit',async(event)=>{
+  event.preventDefault();
+  const plan=pendingMembershipPlan;
+  if(!plan)return;
+  const file=$('manualProof').files[0];
+  if(!file){notify('Choose a payment screenshot.',true);return;}
+  if(file.size>5*1024*1024){notify('Maximum screenshot size is 5 MB.',true);return;}
+  if(!['image/jpeg','image/png','image/webp'].includes(file.type)){
+    notify('Only JPG, PNG and WEBP screenshots are allowed.',true);return;
+  }
+  const data=new FormData();
+  data.append('plan_id',String(plan.id));
+  data.append('method',$('manualMethod').value);
+  data.append('reference',$('manualReference').value.trim());
+  data.append('proof',file);
+  $('manualSubmit').disabled=true;
+  try{
+    const response=await fetch('/api/member/membership-payments',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').content},
+      body:data
     });
-    const url=String(result.checkout_url||'');
-    if(!url){
-      await loadPayments();
-      notify('Checkout URL is not ready. Open Payments to check your payment status.');
-      await showTab('payments');
-      return;
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok){
+      throw Error(result.errors?Object.values(result.errors).flat().join(' '):result.message||`Upload failed (${response.status})`);
     }
-    const parsed=new URL(url);
-    if(parsed.protocol!=='https:') throw Error('Checkout URL must use HTTPS.');
-    notify('Opening secure Xendit checkout. After paying, open Payments and click Verify Xendit Payment.');
-    window.location.assign(parsed.href);
-  });
-}
-async function verifyMembershipXendit(paymentId){
-  await run(async()=>{
-    const result=await request('/xendit/membership/verify',{
-      method:'POST',body:JSON.stringify({payment_id:paymentId})
-    });
-    notify(result.message||'Payment status checked.');
-    await loadOverview();
-    await loadPayments();
-  });
-}
+    $('manualPaymentDialog').hidden=true;
+    pendingMembershipPlan=null;
+    $('manualPaymentForm').reset();
+    await showTab('payments');
+    notify(result.message||'Payment submitted. Waiting for gym owner approval.');
+  }catch(error){notify(error.message,true)}
+  finally{$('manualSubmit').disabled=false;}
+});
 function toggleDelivery(id){
   const isDelivery = $('fulfill-'+id).value === 'delivery';
   $('delivery-'+id).hidden = !isDelivery;
@@ -565,7 +606,11 @@ async function buyProduct(id){
     const method = $('method-'+id).value;
     const fulfillment_method = $('fulfill-'+id).value;
     if(!Number.isInteger(quantity) || quantity < 1) throw Error('Please enter a valid quantity.');
-    const data = {product_id:id, quantity, method, fulfillment_method};
+    const reference = $('orderref-'+id).value.trim();
+    const proof = $('orderproof-'+id).files[0];
+    if(reference.length<4) throw Error('Enter a transaction reference number (4+ characters).');
+    if(!proof || !['image/jpeg','image/png','image/webp'].includes(proof.type) || proof.size>5*1024*1024) throw Error('Attach a JPG, PNG or WEBP screenshot (max 5 MB).');
+    const data = {product_id:id, quantity, method, fulfillment_method, reference};
     if(fulfillment_method === 'delivery'){
       data.delivery_name = $('dname-'+id).value.trim();
       data.delivery_phone = $('dphone-'+id).value.trim();
@@ -574,28 +619,15 @@ async function buyProduct(id){
       if(!data.delivery_name || !data.delivery_phone || !data.delivery_address)
         throw Error('Please fill in recipient name, phone number and delivery address.');
     }
-    const created = await request('/portal/orders',{method:'POST',body:JSON.stringify(data)});
+    const form = new FormData();
+    Object.entries(data).forEach(([k,v]) => { if(v!==null) form.append(k,v); });
+    form.append('proof',proof);
+    const response=await fetch(API+'/portal/orders',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').content},body:form});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok) throw Error(result.errors?Object.values(result.errors).flat().join(' '):result.message||'Order submission failed.');
     await showTab('orders');
-    if(method === 'Xendit') {
-      if(!Number.isSafeInteger(Number(created.order_id)) || Number(created.order_id) < 1)
-        throw Error('Order was saved, but checkout could not start. Open My Orders to retry.');
-      notify('Order reserved. Opening secure Xendit checkout.');
-      await payWithXendit(Number(created.order_id));
-    } else {
-      notify('Order submitted. The gym owner must confirm payment.');
-    }
+    notify('Payment proof submitted. Your order awaits gym owner verification.');
   });
-}
-async function payWithXendit(orderId){
-  if(!Number.isSafeInteger(orderId) || orderId < 1) throw Error('Invalid order ID.');
-  const response=await request('/xendit/checkout',{
-    method:'POST',
-    body:JSON.stringify({order_id:orderId})
-  });
-  const url=String(response.checkout_url||'');
-  const parsed=new URL(url);
-  if(parsed.protocol!=='https:') throw Error('Checkout URL must use HTTPS.');
-  window.location.assign(parsed.href);
 }
 function statusPill(raw){
   const key=String(raw||'pending').toLowerCase().trim().replaceAll(' ','_');
@@ -617,30 +649,33 @@ async function loadOrders(){
   const orders=Array.isArray(d.orders)?d.orders:[];
   $('ordersList').innerHTML=orders.map(o=>{
     const id=Number(o.id);
-    const online=String(o.method||'').toLowerCase()==='xendit';
-    const pending=String(o.status||'').toLowerCase()==='pending';
     const fulfil=o.fulfillment_status||o.status||'pending';
     return `<div class="oc">
       <div class="oc-top">
         <div class="oc-title"><span class="oc-id">#${Number.isSafeInteger(id)?id:'?'}</span><strong>${safe(o.product_name)}</strong></div>
         ${statusPill(o.status)}
       </div>
-      <div class="oc-meta"><span>Qty <b>${Number(o.quantity)}</b></span><span>Total <b>${money(o.total)}</b></span><span>${safe(o.method||'')}</span></div>
+      <div class="oc-meta"><span>Qty <b>${Number(o.quantity)}</b></span><span>Total <b>${money(o.total)}</b></span><span>${safe(o.method||'')}</span><span>Ref: <b>${safe(o.reference||'-')}</b></span></div>
+      ${o.proof_path?`<div class="oc-foot"><a class="lnk" href="/api/member/orders/${Number(o.id)}/proof" target="_blank" rel="noopener">View payment screenshot</a></div>`:''}
       <div class="oc-foot"><span>Fulfillment</span>${statusPill(fulfil)}</div>
-      ${online&&pending?`<div class="oc-note"><span>⏳ Payment pending. Finish checkout, then refresh.</span>${Number.isSafeInteger(id)?`<button type="button" class="button" data-xendit-order="${id}">Pay with Xendit</button>`:''}</div>`:''}
     </div>`;
   }).join('')||'<div class="empty">You have no product orders yet.</div>';
 }
-document.addEventListener('click',event=>{
-  const button=event.target.closest('[data-xendit-order]');
-  if(!button)return;
-  const id=Number(button.dataset.xenditOrder);
-  button.disabled=true;
-  run(async()=>{
-    try{await payWithXendit(id)}finally{button.disabled=false}
-  });
-});
-async function loadPayments(){const d=await request('/portal/payments');$('paymentsList').innerHTML=d.payments.map(p=>{const xp=String(p.method||'').toLowerCase()==='xendit'&&p.status==='pending';return `<div class="oc"><div class="oc-top"><div class="oc-title"><span class="oc-id">#${Number(p.id)}</span><strong>${safe(p.plan)}</strong></div>${statusPill(p.status)}</div><div class="oc-meta"><span>Amount <b>${money(p.amount)}</b></span><span>${safe(p.method||'')}</span><span>${safe(p.reference||'No reference')}</span>${p.due_date?`<span>Valid until <b>${safe(String(p.due_date).slice(0,10))}</b></span>`:''}</div>${xp?`<div class="oc-note"><span>⏳ Waiting for payment confirmation.</span><button type="button" class="button" onclick="verifyMembershipXendit(${Number(p.id)})">Verify Xendit Payment</button></div>`:''}</div>`}).join('')||'<div class="empty">You have no membership payments yet.</div>'}
+async function loadPayments(){
+  const d=await request('/portal/payments');
+  const payments=Array.isArray(d.payments)?d.payments:[];
+  $('paymentsList').innerHTML=payments.map(p=>{
+    const id=Number(p.id);
+    const proof=p.proof_path&&Number.isSafeInteger(id)&&id>0
+      ?`<a class="lnk" href="/api/member/membership-payments/${id}/proof" target="_blank" rel="noopener">View payment screenshot</a>`:'';
+    return `<div class="oc">
+      <div class="oc-top"><div class="oc-title"><span class="oc-id">#${Number.isSafeInteger(id)?id:'?'}</span><strong>${safe(p.plan)}</strong></div>${statusPill(p.status)}</div>
+      <div class="oc-meta"><span>Amount <b>${money(p.amount)}</b></span><span>Method <b>${safe(p.method||'-')}</b></span><span>Reference <b>${safe(p.reference||'-')}</b></span>${p.due_date?`<span>Valid until <b>${safe(String(p.due_date).slice(0,10))}</b></span>`:''}</div>
+      ${proof?`<div class="oc-foot">${proof}</div>`:''}
+      ${p.status==='pending'?'<div class="oc-note">Waiting for gym owner verification.</div>':''}
+    </div>`;
+  }).join('')||'<div class="empty">You have no membership payments yet.</div>';
+}
 // Member profile: same layout as the Gym Owner profile; authenticated member endpoints.
 let memberProfile = null;
 let memberAvatar = document.querySelector('meta[name="my-avatar"]')?.content || '';
