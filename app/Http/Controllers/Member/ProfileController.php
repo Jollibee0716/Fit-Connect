@@ -8,13 +8,14 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 
 class ProfileController extends Controller
 {
     public function show(Request $request)
     {
         return response()->json([
-            'user' => $this->data($request->user())
+            'user' => $this->data($request->user()),
         ]);
     }
 
@@ -28,7 +29,7 @@ class ProfileController extends Controller
                 'required',
                 'email',
                 'max:255',
-                Rule::unique('users', 'email')->ignore($user->id)
+                Rule::unique('users', 'email')->ignore($user->id),
             ],
             'phone' => 'nullable|string|max:30',
             'location' => 'nullable|string|max:255',
@@ -52,7 +53,7 @@ class ProfileController extends Controller
 
         return response()->json([
             'message' => 'Profile updated successfully.',
-            'user' => $this->data($user->fresh())
+            'user' => $this->data($user->fresh()),
         ]);
     }
 
@@ -61,27 +62,39 @@ class ProfileController extends Controller
         $user = $request->user();
 
         $validated = $request->validate([
-            'current_password' => 'required|string',
-            'password' => 'required|string|min:8|confirmed',
+            'current_password' => ['required', 'string'],
+            'password' => [
+                'required',
+                'string',
+                'confirmed',
+                'regex:/^\S+$/',
+                Password::min(8)
+                    ->mixedCase()
+                    ->numbers()
+                    ->symbols()
+                    ->uncompromised(),
+            ],
+        ], [
+            'password.regex' => 'Spaces are not allowed in passwords.',
         ]);
 
-        if (!Hash::check(
-            $validated['current_password'],
-            $user->password
-        )) {
+        if (! Hash::check($validated['current_password'], $user->password)) {
             return response()->json([
-                'message' => 'Current password is incorrect.'
+                'message' => 'Current password is incorrect.',
+                'errors' => [
+                    'current_password' => ['Current password is incorrect.'],
+                ],
             ], 422);
         }
 
         DB::table('users')
             ->where('id', $user->id)
             ->update([
-                'password' => Hash::make($validated['password'])
+                'password' => Hash::make($validated['password']),
             ]);
 
         return response()->json([
-            'message' => 'Password updated successfully.'
+            'message' => 'Password updated successfully.',
         ]);
     }
 
@@ -101,7 +114,7 @@ class ProfileController extends Controller
             'location',
             'bio',
             'status',
-            'last_login_at'
+            'last_login_at',
         ] as $field) {
             $result[$field] = Schema::hasColumn('users', $field)
                 ? $user->{$field}

@@ -48,4 +48,4 @@ unset($__errorArgs, $__bag); ?>
   </div>
 </div>
 </body>
-</html><?php /**PATH C:\xampp\htdocs\dashboard\firstwebsite\resources\views/two-factor.blade.php ENDPATH**/ ?>
+</html><?php /**PATH C:\xampp\htdocs\dashboard\firstwebsite\resources\views\two-factor.blade.php ENDPATH**/ ?>

@@ -80,6 +80,20 @@ body:has(#register:target) #login{display:none}
 
 @media(max-width:480px){.card{padding:30px 22px 26px;border-radius:18px}.grid2{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* Registration password guidance */
+.password-wrap{position:relative}
+.password-wrap input{padding-right:76px}
+.password-toggle{position:absolute;right:12px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--role-color);font-size:13px;font-weight:700;padding:7px;cursor:pointer}
+.password-help{margin-top:10px;color:var(--muted);font-size:12px}
+.password-rules{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:12px;list-style:none;font-size:12px;color:var(--muted)}
+.password-rules li::before{content:'○ ';font-weight:700}
+.password-rules li.passed{color:#4ade80}
+.password-rules li.passed::before{content:'✓ '}
+.password-status{margin-top:8px;font-size:12px;font-weight:600;min-height:18px}
+.password-status.ok{color:#4ade80}
+.password-status.error{color:#ff7a7a}
+@media(max-width:400px){.password-rules{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -271,14 +285,36 @@ body:has(#register:target) #login{display:none}
       </div>
     </div>
 
-    <!-- ============ SHARED: PASSWORD ============ -->
+    <!-- ============ SHARED: PASSWORD (MEMBER AND GYM OWNER) ============ -->
     <div class="field">
       <label for="reg-pass">Password</label>
-      <input type="password" id="reg-pass" name="password" autocomplete="new-password" placeholder="At least 8 characters">
+      <div class="password-wrap">
+        <input type="password" id="reg-pass" name="password" autocomplete="new-password"
+               placeholder="Create a strong password" minlength="8" maxlength="128"
+               aria-describedby="password-guidance password-rules password-status" required>
+        <button type="button" class="password-toggle" data-toggle-password="reg-pass"
+                aria-label="Show password" aria-pressed="false">Show</button>
+      </div>
+      <p id="password-guidance" class="password-help">Passwords cannot contain spaces or other whitespace.</p>
+      <ul class="password-rules" id="password-rules" aria-label="Password requirements">
+        <li id="rule-length">At least 8 characters</li>
+        <li id="rule-upper">Uppercase letter</li>
+        <li id="rule-lower">Lowercase letter</li>
+        <li id="rule-number">Number</li>
+        <li id="rule-symbol">Special character</li>
+        <li id="rule-space">No spaces</li>
+      </ul>
+      <p id="password-status" class="password-status" aria-live="polite"></p>
     </div>
     <div class="field">
       <label for="reg-pass2">Confirm password</label>
-      <input type="password" id="reg-pass2" name="password_confirmation" autocomplete="new-password" placeholder="Repeat your password">
+      <div class="password-wrap">
+        <input type="password" id="reg-pass2" name="password_confirmation"
+               autocomplete="new-password" placeholder="Repeat your password" required>
+        <button type="button" class="password-toggle" data-toggle-password="reg-pass2"
+                aria-label="Show confirmation password" aria-pressed="false">Show</button>
+      </div>
+      <p id="confirm-status" class="password-status" aria-live="polite"></p>
     </div>
 
     <button type="submit" class="btn">Create account</button>
@@ -286,5 +322,85 @@ body:has(#register:target) #login{display:none}
 
   <p class="alt">Already have an account? <a href="#login">Sign in</a></p>
 </main>
+<script>
+(() => {
+  const password = document.getElementById('reg-pass');
+  const confirmation = document.getElementById('reg-pass2');
+  const status = document.getElementById('password-status');
+  const confirmStatus = document.getElementById('confirm-status');
+  const form = password.closest('form');
+
+  const checks = {
+    length: value => value.length >= 8,
+    upper: value => /[A-Z]/.test(value),
+    lower: value => /[a-z]/.test(value),
+    number: value => /[0-9]/.test(value),
+    symbol: value => /[^A-Za-z0-9\s]/.test(value),
+    space: value => !/\s/.test(value)
+  };
+
+  const validPassword = value => Object.values(checks).every(test => test(value));
+
+  function updateConfirmation() {
+    const matches = confirmation.value === password.value;
+    confirmation.setCustomValidity(confirmation.value && !matches ? 'Passwords do not match.' : '');
+    confirmStatus.textContent = !confirmation.value ? '' : matches ? 'Passwords match.' : 'Passwords do not match.';
+    confirmStatus.className = 'password-status ' + (matches ? 'ok' : 'error');
+  }
+
+  function updatePassword() {
+    const value = password.value;
+    Object.entries(checks).forEach(([key, test]) => {
+      document.getElementById('rule-' + key).classList.toggle('passed', test(value));
+    });
+    if (!value) {
+      status.textContent = '';
+      status.className = 'password-status';
+    } else {
+      const valid = validPassword(value);
+      status.textContent = valid ? 'Strong password format.' : 'Complete all password requirements.';
+      status.className = 'password-status ' + (valid ? 'ok' : 'error');
+    }
+    updateConfirmation();
+  }
+
+  password.addEventListener('input', () => {
+    // Prevent whitespace from remaining in the submitted password.
+    if (/\s/.test(password.value)) {
+      password.value = password.value.replace(/\s/g, '');
+      status.textContent = 'Spaces are not allowed and have been removed.';
+      status.className = 'password-status error';
+    }
+    updatePassword();
+  });
+  confirmation.addEventListener('input', updateConfirmation);
+
+  document.querySelectorAll('[data-toggle-password]').forEach(button => {
+    button.addEventListener('click', () => {
+      const field = document.getElementById(button.dataset.togglePassword);
+      const visible = field.type === 'password';
+      field.type = visible ? 'text' : 'password';
+      button.textContent = visible ? 'Hide' : 'Show';
+      button.setAttribute('aria-pressed', String(visible));
+      button.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+    });
+  });
+
+  form.addEventListener('submit', event => {
+    updatePassword();
+    updateConfirmation();
+    if (!validPassword(password.value)) {
+      event.preventDefault();
+      status.textContent = 'Please meet all password requirements before creating your account.';
+      status.className = 'password-status error';
+      password.focus();
+    } else if (password.value !== confirmation.value) {
+      event.preventDefault();
+      confirmation.reportValidity();
+    }
+  });
+  updatePassword();
+})();
+</script>
 </body>
-</html><?php /**PATH C:\xampp\htdocs\dashboard\firstwebsite\resources\views/log_in.blade.php ENDPATH**/ ?>
+</html><?php /**PATH C:\xampp\htdocs\dashboard\firstwebsite\resources\views\log_in.blade.php ENDPATH**/ ?>

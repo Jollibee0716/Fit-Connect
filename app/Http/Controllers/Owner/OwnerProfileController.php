@@ -81,13 +81,13 @@ class OwnerProfileController extends Controller
 
             // The gyms table is the shared source read by Admin and Members.
             DB::table('gyms')->where('gym_owner_id', $owner->id)->update([
-                    'name' => $data['gym_name'],
-                    'address' => $data['gym_address'] ?? '',
-                    'phone' => $data['phone_number'] ?? '',
-                    'about' => $data['about'] ?? null,
-                    'hours' => $data['hours'] ?? null,
-                    'updated_at' => now(),
-                ]);
+                'name' => $data['gym_name'],
+                'address' => $data['gym_address'] ?? '',
+                'phone' => $data['phone_number'] ?? '',
+                'about' => $data['about'] ?? null,
+                'hours' => $data['hours'] ?? null,
+                'updated_at' => now(),
+            ]);
         });
 
         return response()->json(['message' => 'Gym details saved']);
@@ -95,21 +95,36 @@ class OwnerProfileController extends Controller
 
     public function updatePassword(Request $request): JsonResponse
     {
-        $request->validate([
-            'current_password' => ['required'],
-            'password'         => ['required', 'confirmed', Password::min(8)],
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => [
+                'required',
+                'string',
+                'confirmed',
+                'regex:/^\S+$/u',
+                Password::min(8)->mixedCase()->numbers()->symbols()->uncompromised(),
+            ],
+        ], [
+            'password.regex' => 'Spaces and other whitespace are not allowed in passwords.',
         ]);
 
         $user = $request->user();
 
-        if (! Hash::check($request->current_password, $user->password)) {
+        if (! Hash::check($validated['current_password'], $user->password)) {
             return response()->json([
                 'message' => 'The current password is incorrect.',
                 'errors'  => ['current_password' => ['The current password is incorrect.']],
             ], 422);
         }
 
-        $user->forceFill(['password' => $request->password])->save();
+        if (Hash::check($validated['password'], $user->password)) {
+            return response()->json([
+                'message' => 'Please choose a password different from your current password.',
+                'errors' => ['password' => ['Your new password must be different from your current password.']],
+            ], 422);
+        }
+
+        $user->forceFill(['password' => Hash::make($validated['password'])])->save();
 
         return response()->json(['message' => 'Password changed']);
     }

@@ -30,8 +30,20 @@ class ProfileController extends Controller
     public function updatePassword(Request $request): JsonResponse
     {
         $request->validate([
-            'current_password' => ['required'],
-            'password'         => ['required', 'confirmed', Password::min(8)],
+            'current_password' => ['required', 'string'],
+            'password' => [
+                'required',
+                'string',
+                'confirmed',
+                'regex:/^\S+$/u',
+                Password::min(8)
+                    ->mixedCase()
+                    ->numbers()
+                    ->symbols()
+                    ->uncompromised(),
+            ],
+        ], [
+            'password.regex' => 'Spaces and other whitespace are not allowed in passwords.',
         ]);
 
         $user = $request->user();
@@ -43,7 +55,9 @@ class ProfileController extends Controller
             ], 422);
         }
 
-        $user->forceFill(['password' => $request->password])->save();
+        $user->forceFill([
+            'password' => Hash::make($request->input('password')),
+        ])->save();
 
         return response()->json(['message' => 'Password changed']);
     }
