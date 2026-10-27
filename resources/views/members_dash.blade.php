@@ -263,6 +263,32 @@ nav.menu .nav.active{background:var(--accent);color:var(--navtxt)}
 .oc-note{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:rgba(255,153,0,.1);border:1px dashed rgba(255,153,0,.35);color:var(--accent);font-size:13px}
 .oc-note .button{margin:0;padding:6px 12px;font-size:13px}
 @media(max-width:480px){.oc-top{flex-direction:column}}
+
+/* FitConnect 2026 — consistent premium UI enhancement. API bindings unchanged. */
+:root{--bg:#090b10;--panel:#141821;--ink:#f7f8fa;--mute:#a5aebb;--line:rgba(196,205,221,.14);--accent:#ff9f1a;--nav:#ff9f1a;--navtxt:#181009;--green:#47d6a1;--red:#fb6477;color-scheme:dark}
+html{scroll-behavior:smooth}body{background:radial-gradient(ellipse 62% 45% at 5% 0%,rgba(255,159,26,.12),transparent 73%),radial-gradient(ellipse 43% 50% at 95% 95%,rgba(54,69,102,.16),transparent 75%),#090b10;color:var(--ink);font-feature-settings:'tnum' 1;line-height:1.5}
+.app{max-width:1500px;min-height:calc(100vh - 48px);background:#10141c;border:1px solid var(--line);border-radius:22px;box-shadow:0 28px 90px rgba(0,0,0,.37);overflow:hidden}
+.side{width:235px;background:linear-gradient(180deg,#161b25 0%,#12151d 100%);border-right:1px solid var(--line)}
+.logo,.brand{padding:25px 20px 24px!important}.logo-mark,.brandmark{border-radius:12px!important;box-shadow:0 5px 22px rgba(255,159,26,.20)}.logo-txt b,.brandname b{font-size:19px!important;letter-spacing:-.55px}
+nav,nav.menu,.side nav.menu{padding:0 12px!important;gap:5px!important}nav a,nav.menu .nav,.side nav.menu .nav{min-height:42px;border-radius:11px!important;transition:background .18s ease,color .18s ease,transform .18s ease;font-weight:540!important}nav a:hover,nav.menu .nav:hover,.side nav.menu .nav:hover{background:rgba(255,255,255,.075)!important;transform:translateX(2px)}nav a.on,nav.menu .nav.active,.side nav.menu .nav.active{background:linear-gradient(100deg,#ffab38,#f88b13)!important;color:#211302!important;box-shadow:0 7px 16px rgba(255,159,26,.14);font-weight:700!important}
+.top,.topbar,.main .top.topbar{min-height:72px!important;padding:17px 29px!important;background:rgba(18,23,32,.92);border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}
+.body,.content{padding:30px!important;background:transparent!important}.view h1,.page h1,.head h1{font-size:clamp(23px,2.4vw,30px);letter-spacing:-.8px;font-weight:800;line-height:1.2}.sub,.head p,.page>p{line-height:1.7;color:var(--mute)}
+.card,.stat,.box,.chart,.gym-card,.gym-hero,.gym-tile{background:linear-gradient(148deg,#1c2230,#171c26)!important;border:1px solid var(--line)!important;border-radius:16px!important;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.card,.stat,.box,.chart{padding:20px!important}.cards,.stats,.grid2,.pf-grid,.gym-grid{gap:17px!important}.card strong,.stat b{letter-spacing:-.8px}.card span,.stat small{letter-spacing:.025em}.card:hover,.gym-card:hover,.gym-tile:hover{border-color:rgba(255,159,26,.36)!important;transition:border-color .2s,transform .2s}.gym-card:hover{transform:translateY(-3px)}
+.btn,.button{border-radius:10px!important;font-weight:700!important;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}.btn:hover:not(:disabled),.button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 16px rgba(255,159,26,.15)}.btn.ghost,.button.outline,.button.secondary{border-color:rgba(219,228,240,.20)!important;background:rgba(255,255,255,.025)!important}.btn.danger,.button.danger{background:#d94356!important}
+input,textarea,select,.input,.select{background:#111620!important;border:1px solid rgba(211,221,233,.20)!important;border-radius:10px!important;color:var(--ink)!important}input:focus,textarea:focus,select:focus{border-color:var(--accent)!important;outline:2px solid rgba(255,159,26,.18);outline-offset:1px}
+.tabs{gap:8px!important}.tab{border-radius:10px!important;padding:8px 13px!important}.tab.on{background:var(--accent)!important;color:var(--navtxt)!important}
+.scroll,.chart[style*="overflow-x"],.box.scroll{overflow-x:auto}table{border-collapse:separate;border-spacing:0;width:100%}th{font-size:11px!important;letter-spacing:.075em;text-transform:uppercase;background:rgba(255,255,255,.025);white-space:nowrap}td,th{padding:13px 14px!important}tbody tr:hover{background:rgba(255,255,255,.035)}tbody tr:last-child td{border-bottom:0}
+.tag,.pill{font-weight:700;border-radius:99px}.tag.off{background:rgba(148,163,184,.14)}.tag.rej{background:rgba(251,100,119,.12);color:#ff8a99}.tag.deactivated{background:rgba(251,100,119,.12);color:#ff8a99}
+.modal{background:#1a202c!important;border-radius:17px!important;box-shadow:0 25px 100px rgba(0,0,0,.65)}.ov{backdrop-filter:blur(5px)}.toast{background:#252d3a!important;border-color:rgba(255,159,26,.45)!important;box-shadow:0 12px 45px rgba(0,0,0,.4)}
+.hero{border-radius:18px!important;background:radial-gradient(circle at 100% 10%,rgba(255,159,26,.13),transparent 55%),linear-gradient(120deg,#24212a,#1b2230)!important;padding:28px!important}.hero h1{font-size:clamp(24px,2.7vw,33px)!important}.tile{border-radius:13px!important;background:rgba(255,159,26,.12)!important}
+.ms-body{scrollbar-width:thin;scrollbar-color:#414653 transparent}.bub{border-radius:14px!important}.bub.mine{background:var(--accent)}.date{background:#1c2230!important}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:900px){.side{width:205px}.body,.content{padding:22px!important}.top,.topbar,.main .top.topbar{padding:14px 20px!important}.cards{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:760px){body{padding:0}.app{min-height:100vh;border:0;border-radius:0}.side{width:100%;border-right:0;border-bottom:1px solid var(--line)}.side nav,.side nav.menu{flex-direction:row!important;flex-wrap:nowrap!important;overflow-x:auto;padding:0 10px 12px!important;gap:6px!important;scrollbar-width:thin}.side nav a,.side nav.menu .nav{white-space:nowrap;width:auto!important;flex-shrink:0;min-height:38px;padding:8px 11px!important}.logo,.brand{padding:15px 16px!important}.body,.content{padding:18px!important}.top,.topbar,.main .top.topbar{min-height:60px!important;padding:12px 17px!important}.pf-grid,.grid2,.mail{grid-template-columns:1fr!important}.cards,.stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}.row{flex-wrap:wrap}}
+@media(max-width:480px){.cards,.stats,.grid2{grid-template-columns:1fr!important}.card,.stat,.box,.chart{padding:16px!important}.hero{padding:20px!important}th,td{padding:10px!important}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
 </style>
 </head>
 <body>
@@ -510,6 +536,7 @@ function membershipLabel(m){
   if(m.active) return 'Active - '+(m.plan||'Membership')+(m.due_date?' (until '+m.due_date+')':'');
   if(m.status==='pending') return 'Payment pending';
   if(m.status==='expired') return 'Membership expired';
+  if(['deactivated','inactive'].includes(m.status)) return 'Membership deactivated';
   return 'No active membership';
 }
 function renderMembershipStatus(){
@@ -530,7 +557,7 @@ function renderMembershipStatus(){
         ${currentMembership.active?`<p style="margin-top:10px">Plan: <strong>${safe(currentMembership.plan||'-')}</strong></p>
           <p>Valid until: <strong>${safe(currentMembership.due_date||'-')}</strong></p>`:
           `<p style="margin-top:10px">${currentMembership.status==='pending'?'Your payment proof is awaiting approval from the gym owner. You can check its status under Payments.':
-          currentMembership.status==='expired'?'Your previous membership has expired.':'Choose a plan to pay for membership.'}</p>`}`;
+          ['deactivated','inactive'].includes(currentMembership.status)?'Your membership has been deactivated by your gym. Contact the gym owner for assistance.':currentMembership.status==='expired'?'Your previous membership has expired.':'Choose a plan to pay for membership.'}</p>`}`;
     }
   }
 }
