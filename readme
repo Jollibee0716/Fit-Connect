@@ -1,0 +1,9 @@
+FitConnect is a web-based gym management and fitness platform designed to connect gym owners, members, and administrators in one convenient system. It simplifies gym operations while providing users with an accessible and organized fitness experience.
+
+The system features three user roles: Admin, Gym Owner, and Member, each with a dedicated dashboard and specific functionalities.
+
+Gym owners can manage memberships, trainers, fitness classes, attendance, products, orders, and payments. Members can explore gyms, register for memberships, book fitness classes, purchase gym products, monitor their attendance, and manage their profiles. Administrators oversee users, gym registrations, account approvals, and overall platform activities.
+
+FitConnect also includes secure user authentication, email-based two-factor verification, role-based access control, and activity logs to support security and accountability.
+
+Developed using Laravel, PHP, MySQL, HTML, CSS, and JavaScript, FitConnect aims to reduce manual processes, improve gym management efficiency, and make fitness services more convenient and accessible.
